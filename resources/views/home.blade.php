@@ -105,6 +105,7 @@
     <section class="howto">
         <h2>Controls</h2>
         <p><kbd>Right-click</kbd> move / attack · <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd> abilities (aim with mouse) · <kbd>D</kbd> Flash · <kbd>B</kbd> Recall · <kbd>P</kbd> Shop (in base) · <kbd>Y</kbd> toggle camera lock · <kbd>Space</kbd> re-center · <kbd>A</kbd> attack nearest · <kbd>S</kbd> stop · <kbd>Esc</kbd> pause</p>
+        <p><b>On mobile/tablet</b> (landscape): left joystick to move · hold ⚔ to auto-attack · tap an ability to auto-aim, or drag from it to aim · tap the map to walk there.</p>
     </section>
 </main>
 @endsection

@@ -2,6 +2,7 @@
 
 @section('title', 'In Game – '.config('app.name'))
 @section('body-class', 'ingame')
+@section('viewport-extra', ', maximum-scale=1, user-scalable=no')
 
 @section('content')
 <canvas id="game"></canvas>
@@ -40,8 +41,29 @@
     </div>
 
     <div id="shop" class="panel hidden">
-        <h2>Shop <small>(only usable in base · P to close)</small></h2>
+        <h2>Shop <small>(only usable in base · P to close)</small> <button type="button" id="shop-close" class="shop-close">✕</button></h2>
         <div id="shop-items"></div>
+    </div>
+
+    <div id="touch-ui">
+        <div class="tmenu">
+            <button type="button" id="t-shop">Shop</button>
+            <button type="button" id="t-recall">Recall</button>
+            <button type="button" id="t-pause">II</button>
+        </div>
+        <div id="joy"><div id="joy-knob"></div></div>
+        <div id="tbtns">
+            <button type="button" class="tb big" id="t-attack">⚔</button>
+            <button type="button" class="tb q" data-abil="0">Q<span class="lbl"></span><span class="cd hidden"></span></button>
+            <button type="button" class="tb w" data-abil="1">W<span class="lbl"></span><span class="cd hidden"></span></button>
+            <button type="button" class="tb e" data-abil="2">E<span class="lbl"></span><span class="cd hidden"></span></button>
+            <button type="button" class="tb r" data-abil="3">R<span class="lbl"></span><span class="cd hidden"></span></button>
+            <button type="button" class="tb sm f" data-abil="flash">D<span class="lbl"></span><span class="cd hidden"></span></button>
+        </div>
+    </div>
+    <div id="rotate">
+        <div>⟳</div>
+        <p>Rotate your device to landscape to play</p>
     </div>
 
     <div id="banner" class="hidden"></div>
