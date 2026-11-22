@@ -35,4 +35,19 @@ return [
         ],
     ],
 
+    // Sign in with Google (Laravel Socialite). Leave empty to hide the button.
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI', '/auth/google/callback'),
+    ],
+
+    // Sign in with a nikniq.com account (PKCE). Off until NIKNIQ_CLIENT_ID is set.
+    'nikniq' => [
+        'url' => env('NIKNIQ_URL', 'https://nikniq.com'),
+        'client_id' => env('NIKNIQ_CLIENT_ID'),
+        'client_secret' => env('NIKNIQ_CLIENT_SECRET'),
+        'redirect' => env('NIKNIQ_REDIRECT_URI', rtrim((string) env('APP_URL', ''), '/').'/auth/callback'),
+    ],
+
 ];

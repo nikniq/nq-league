@@ -2,6 +2,7 @@
 
 @section('title', 'In Game – '.config('app.name'))
 @section('body-class', 'ingame')
+@section('bare', '1')
 @section('viewport-extra', ', maximum-scale=1, user-scalable=no')
 
 @section('content')

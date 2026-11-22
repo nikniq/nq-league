@@ -26,7 +26,13 @@ class GameController extends Controller
 
         $recent = GameMatch::latest()->limit(8)->get();
 
-        return view('home', compact('leaders', 'recent'));
+        $stats = [
+            'matches' => GameMatch::count(),
+            'players' => GameMatch::distinct('player_name')->count('player_name'),
+            'kills' => (int) GameMatch::sum('kills'),
+        ];
+
+        return view('home', compact('leaders', 'recent', 'stats'));
     }
 
     public function play(Request $request)
