@@ -907,6 +907,8 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => keysDown.delete(e.key.toLowerCase()));
 
+$('d-shop') && $('d-shop').addEventListener('click', () => { toggleShop(); $('d-shop').blur(); });
+$('shop-close').addEventListener('click', () => $('shop').classList.add('hidden'));
 function toggleShop() {
     $('shop').classList.toggle('hidden');
     renderShop();
@@ -1040,7 +1042,6 @@ if (isTouch) {
     $('t-recall').addEventListener('click', () => { if (player.alive && !inFountain(player, player.team)) { player.recall = 8; player.order = null; } });
     $('t-shop').addEventListener('click', toggleShop);
     $('t-pause').addEventListener('click', () => { if (!world.over) paused = !paused; });
-    $('shop-close').addEventListener('click', () => $('shop').classList.add('hidden'));
 
     let wentFullscreen = false;
     document.addEventListener('pointerdown', () => {
@@ -1092,6 +1093,7 @@ function updateHud() {
     $('kda').textContent = `${p.kills}/${p.deaths}`;
     $('cs').textContent = p.cs;
     $('gold').textContent = Math.floor(p.gold);
+    if ($('d-shop')) $('d-shop').classList.toggle('can-buy', p.alive && inFountain(p, p.team) && Object.values(ITEMS).some((it) => it.cost <= p.gold) && $('shop').classList.contains('hidden'));
     $('items').innerHTML = Array.from({ length: MAX_ITEMS }, (_, i) => `<div title="${p.items[i] ? p.items[i].name : ''}">${p.items[i] ? p.items[i].icon : ''}</div>`).join('');
     p.def.abilities.forEach((a, i) => {
         const el = abilEls[i], cd = el.querySelector('.cd');

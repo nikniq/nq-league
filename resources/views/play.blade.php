@@ -37,6 +37,7 @@
             <div>KDA <b id="kda">0/0</b></div>
             <div>CS <b id="cs">0</b></div>
             <div class="gold">Gold <b id="gold">0</b></div>
+            <button type="button" id="d-shop" class="shop-btn">Shop <kbd>P</kbd></button>
             <div class="items" id="items"></div>
         </div>
     </div>
