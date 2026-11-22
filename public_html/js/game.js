@@ -485,6 +485,7 @@ function update(dt) {
         if (u.kind === 'minion') minionAI(u);
         else if (u.kind === 'tower') towerAI(u);
         else if (u.kind === 'champ' && (!u.isPlayer || world.autoplay)) botAI(u, dt);
+        else if (u.isPlayer) autoAcquire(u, dt);
         if (u.kind !== 'nexus') act(u, dt);
     }
 
@@ -563,6 +564,8 @@ function act(u, dt) {
     } else if (o.type === 'attack') {
         const t = o.target;
         if (!validTarget(u, t)) { u.order = null; return; }
+        // Auto-acquired targets are never chased out of range.
+        if (o.auto && dist(u, t) > u.range + t.r + u.r * 0.5 + 40) { u.order = null; return; }
         const reach = u.range + t.r + u.r * 0.5;
         if (dist(u, t) <= reach) {
             u.facing = Math.atan2(t.y - u.y, t.x - u.x);
@@ -666,6 +669,26 @@ function updateProjectiles(dt) {
         if (p.travelled < p.range && p.x > 0 && p.y > 0 && p.x < MAP && p.y < MAP) out.push(p);
     }
     world.projectiles = out;
+}
+
+// ---------- Player auto-attack ----------
+/**
+ * When the player is idle, automatically fire at the best enemy in attack range:
+ * champions first, then the lowest-health minion, then structures.
+ */
+function autoAcquire(u, dt) {
+    u.holdT = Math.max(0, (u.holdT || 0) - dt);
+    if (!u.alive || u.order || u.dash || u.recall > 0 || u.holdT > 0 || u.stun > 0) return;
+    const reach = (e) => dist(u, e) <= u.range + e.r + u.r * 0.5;
+    let champ = null, minion = null, structure = null;
+    for (const e of world.units) {
+        if (!validTarget(u, e) || isInvulnerable(e) || !reach(e)) continue;
+        if (e.kind === 'champ') { if (!champ || e.hp < champ.hp) champ = e; }
+        else if (e.kind === 'minion') { if (!minion || e.hp < minion.hp) minion = e; }
+        else if (!structure) structure = e;
+    }
+    const t = champ || minion || structure;
+    if (t) u.order = { type: 'attack', target: t, auto: true };
 }
 
 // ---------- Bot AI ----------
@@ -952,7 +975,7 @@ window.addEventListener('keydown', (e) => {
     else if (k === '1') drinkPotion(player);
     else if (k === 'g') setView(use3D ? '2d' : '3d');
     else if (k === 'y') { cam.locked = !cam.locked; banner(cam.locked ? 'Camera locked' : 'Camera unlocked'); }
-    else if (k === 's') { player.order = null; player.recall = 0; }
+    else if (k === 's') { player.order = null; player.recall = 0; player.holdT = 1.5; }
     else if (k === 'a') { const t = nearestEnemy(player, 600); if (t) player.order = { type: 'attack', target: t }; }
 });
 window.addEventListener('keyup', (e) => keysDown.delete(e.key.toLowerCase()));
