@@ -1278,6 +1278,10 @@ function drawMap(view) {
 
 // ---------- Particles ----------
 const particles = [];
+const dusts = [], ghosts = [], impacts = [];
+let prevProj = [];
+const clouds = [];
+for (let i = 0; i < 9; i++) clouds.push({ x: Math.random() * 4000, y: Math.random() * 4000, r: 350 + Math.random() * 400, v: 18 + Math.random() * 14 });
 function emit(x, y, n, color, speed = 200, life = 0.5, size = 3, gravity = 0) {
     for (let i = 0; i < n; i++) {
         const a = Math.random() * TAU, s = speed * (0.3 + Math.random() * 0.7);
@@ -1331,8 +1335,15 @@ fxEvent = (type, u, extra) => {
 
 // ---------- Units ----------
 function walkPhase(u, dt) {
-    const moved = u._px !== undefined && Math.hypot(u.x - u._px, u.y - u._py) > 0.2;
+    const step = u._px !== undefined ? Math.hypot(u.x - u._px, u.y - u._py) : 0;
+    const moved = step > 0.2;
+    u.spd = dt > 0 ? step / dt : 0;
     u._px = u.x; u._py = u.y;
+    if (u.kind === 'champ' && moved) {
+        u.dustT = (u.dustT || 0) - dt;
+        if (u.dustT <= 0) { u.dustT = 0.16; dusts.push({ x: u.x + (Math.random() - 0.5) * 8, y: u.y + u.r * 0.5, t: 0, dur: 0.6, s: 4 + Math.random() * 3 }); }
+        if (u.spd > 700 && u.spd < 5000) ghosts.push({ u, x: u.x, y: u.y, t: 0, dur: 0.3 });
+    }
     if (moved) u.walkT = (u.walkT || 0) + dt;
     u.atkAnim = Math.max(0, (u.atkAnim || 0) - dt);
     return moved;
@@ -1632,6 +1643,51 @@ function drawLights(view) {
     ctx.globalCompositeOperation = 'source-over';
 }
 
+function drawGround(dt) {
+    for (let i = dusts.length - 1; i >= 0; i--) {
+        const d = dusts[i]; d.t += dt;
+        if (d.t >= d.dur) { dusts.splice(i, 1); continue; }
+        const k = d.t / d.dur;
+        ctx.globalAlpha = 0.35 * (1 - k);
+        ellipse(d.x, d.y - k * 6, d.s * (1 + k * 1.6), d.s * (0.6 + k), '#d9c9a3');
+    }
+    ctx.globalAlpha = 1;
+    if (dusts.length > 200) dusts.splice(0, dusts.length - 200);
+}
+
+function drawGhosts(dt) {
+    ctx.globalCompositeOperation = 'lighter';
+    for (let i = ghosts.length - 1; i >= 0; i--) {
+        const g = ghosts[i]; g.t += dt;
+        if (g.t >= g.dur) { ghosts.splice(i, 1); continue; }
+        const k = g.t / g.dur;
+        glow(g.x, g.y - g.u.r * 0.2, g.u.r * 1.4, TEAM_COLOR[g.u.team], 0.45 * (1 - k));
+    }
+    ctx.globalCompositeOperation = 'source-over';
+    if (ghosts.length > 120) ghosts.splice(0, ghosts.length - 120);
+}
+
+let cloudImg = null;
+function cloudSprite() {
+    if (cloudImg) return cloudImg;
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gr.addColorStop(0, 'rgba(0,0,20,1)'); gr.addColorStop(0.6, 'rgba(0,0,20,0.5)'); gr.addColorStop(1, 'rgba(0,0,20,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    return (cloudImg = c);
+}
+function drawClouds(view, dt) {
+    for (const c of clouds) {
+        c.x += c.v * dt; c.y -= c.v * 0.5 * dt;
+        if (c.x - c.r > 4000) c.x = -c.r;
+        if (c.y + c.r < 0) c.y = 4000 + c.r;
+        if (c.x + c.r < view.x0 || c.x - c.r > view.x1 || c.y + c.r < view.y0 || c.y - c.r > view.y1) continue;
+        ctx.globalAlpha = 0.16;
+        ctx.drawImage(cloudSprite(), c.x - c.r, c.y - c.r * 0.7, c.r * 2, c.r * 1.4);
+    }
+    ctx.globalAlpha = 1;
+}
+
 function drawShockwaves(dt) {
     for (let i = shockwaves.length - 1; i >= 0; i--) {
         const w = shockwaves[i];
@@ -1659,7 +1715,22 @@ function drawMotes(view) {
 }
 
 function drawProjectiles(dt) {
+    const cur = new Set(world.projectiles);
+    for (const p of prevProj) if (!cur.has(p)) {
+        impacts.push({ x: p.x, y: p.y, t: 0, dur: 0.28, r: (p.homing ? p.size * 3 : p.width) * 1.4, color: p.color });
+        emit(p.x, p.y, p.big ? 18 : 7, p.color, p.big ? 300 : 180, 0.35, p.big ? 4 : 2.5);
+    }
+    prevProj = world.projectiles.slice();
     ctx.globalCompositeOperation = 'lighter';
+    for (let i = impacts.length - 1; i >= 0; i--) {
+        const m = impacts[i]; m.t += dt;
+        if (m.t >= m.dur) { impacts.splice(i, 1); continue; }
+        const k = m.t / m.dur;
+        glow(m.x, m.y, m.r * (1 + k * 1.5), m.color, 1 - k);
+        ctx.globalAlpha = 1 - k; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(m.x, m.y, m.r * (0.5 + k * 1.8), 0, TAU); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
     for (const p of world.projectiles) {
         if (p.homing) {
             const isTower = p.owner.kind === 'tower';
@@ -1734,7 +1805,8 @@ function drawEffects() {
             glow(e.tx, e.ty, 60, 'rgba(255,215,90,0.9)', 1 - k);
             ctx.globalCompositeOperation = 'source-over';
         } else if (e.type === 'num') {
-            const s = 1 + Math.max(0, 0.3 - k) * 2;
+            const big = typeof e.r === 'number' && e.r >= 150;
+            const s = (big ? 1.5 : 1) + Math.max(0, 0.3 - k) * (big ? 3 : 2);
             ctx.font = `800 ${Math.round(15 * s)}px system-ui`; ctx.textAlign = 'center';
             ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.8)';
             ctx.strokeText(e.r, e.x, e.y - k * 46);
@@ -1829,6 +1901,7 @@ function render(dt) {
     const hw = W / 2 / zoom, hh = H / 2 / zoom;
     const view = { x0: cam.x - hw, x1: cam.x + hw, y0: cam.y - hh, y1: cam.y + hh };
     drawMap(view);
+    drawGround(dt);
     drawLights(view);
     drawShockwaves(dt);
     drawRangeIndicator();
@@ -1836,9 +1909,11 @@ function render(dt) {
     visible.sort((a, b) => a.y - b.y);
     for (const u of visible) if (!u.alive && u.kind === 'tower') drawUnit(u, dt);
     for (const u of visible) if (u.alive || u.kind !== 'tower') drawUnit(u, dt);
+    drawGhosts(dt);
     drawProjectiles(dt);
     drawParticles();
     drawEffects();
+    drawClouds(view, dt);
     drawMotes(view);
     ctx.restore();
     drawVignette();
