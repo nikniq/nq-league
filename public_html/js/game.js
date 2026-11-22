@@ -464,7 +464,7 @@ function update(dt) {
         u.slow = Math.max(0, u.slow - dt);
         if (u.kind === 'minion') minionAI(u);
         else if (u.kind === 'tower') towerAI(u);
-        else if (u.kind === 'champ' && !u.isPlayer) botAI(u, dt);
+        else if (u.kind === 'champ' && (!u.isPlayer || world.autoplay)) botAI(u, dt);
         if (u.kind !== 'nexus') act(u, dt);
     }
 
@@ -800,6 +800,7 @@ let W = 0, H = 0, DPR = 1;
 let hoverAbility = -1;
 
 setupGame(cfg);
+if (/[?&]autoplay/.test(location.search)) { world.autoplay = true; cam.locked = true; }
 cam.x = player.x; cam.y = player.y;
 
 feed = (text, team) => {
@@ -1196,6 +1197,28 @@ function prerenderMap() {
         g.strokeStyle = `rgba(210,240,255,${0.06 + r() * 0.12})`; g.lineWidth = 2;
         g.beginPath(); g.moveTo(x, y); g.lineTo(x + 12 + r() * 22, y + 12 + r() * 22); g.stroke();
     }
+    for (const side of [-1, 1]) {
+        for (let i = 0; i < 900; i++) {
+            const t = r() * 1.05 - 0.02, off = side * (118 + r() * 14);
+            const x = t * MAP + off / Math.SQRT2, y = t * MAP - off / Math.SQRT2;
+            g.fillStyle = `rgba(225,245,255,${0.12 + r() * 0.25})`;
+            g.beginPath(); g.ellipse(x, y, 4 + r() * 10, 2 + r() * 3, Math.PI / 4, 0, TAU); g.fill();
+        }
+        for (let i = 0; i < 500; i++) {
+            const t = r() * 1.05 - 0.02, off = side * (150 + r() * 22);
+            const x = t * MAP + off / Math.SQRT2, y = t * MAP - off / Math.SQRT2;
+            g.fillStyle = r() < 0.5 ? 'rgba(120,108,74,0.5)' : 'rgba(40,34,22,0.4)';
+            g.beginPath(); g.arc(x, y, 2 + r() * 5, 0, TAU); g.fill();
+        }
+    }
+    for (let i = 0; i < 45; i++) {
+        const t = r(), off = (r() < 0.5 ? -1 : 1) * (70 + r() * 40);
+        const x = t * MAP + off / Math.SQRT2, y = t * MAP - off / Math.SQRT2, pr = 9 + r() * 9, a = r() * TAU;
+        g.fillStyle = 'rgba(0,20,30,0.3)'; g.beginPath(); g.arc(x + 2, y + 3, pr, 0, TAU); g.fill();
+        g.fillStyle = '#3f7d3a'; g.beginPath(); g.moveTo(x, y); g.arc(x, y, pr, a + 0.5, a + TAU - 0.1); g.closePath(); g.fill();
+        g.strokeStyle = 'rgba(130,190,100,0.6)'; g.lineWidth = 1.5; g.beginPath(); g.arc(x, y, pr * 0.7, a + 0.6, a + TAU - 0.2); g.stroke();
+        if (r() < 0.35) { g.fillStyle = '#f2b6d0'; g.beginPath(); g.arc(x - pr * 0.2, y - pr * 0.2, 3.5, 0, TAU); g.fill(); }
+    }
 
     const lane = (w, col) => {
         for (const path of Object.values(LANES)) {
@@ -1212,11 +1235,47 @@ function prerenderMap() {
         g.fillStyle = r() < 0.5 ? `rgba(55,40,24,${0.25 + r() * 0.3})` : `rgba(170,150,115,${0.2 + r() * 0.3})`;
         g.beginPath(); g.arc(x, y, 1.5 + r() * 4, 0, TAU); g.fill();
     }
+    for (const path of Object.values(LANES)) {
+        for (let k = 1; k < path.length; k++) {
+            const a = path[k - 1], b = path[k], len = Math.hypot(b.x - a.x, b.y - a.y);
+            const nx = -(b.y - a.y) / len, ny = (b.x - a.x) / len;
+            for (const o of [-34, 34]) {
+                g.strokeStyle = 'rgba(50,36,20,0.28)'; g.lineWidth = 9;
+                g.beginPath(); g.moveTo(a.x + nx * o, a.y + ny * o); g.lineTo(b.x + nx * o, b.y + ny * o); g.stroke();
+                g.strokeStyle = 'rgba(190,165,120,0.12)'; g.lineWidth = 3;
+                g.beginPath(); g.moveTo(a.x + nx * (o + 6), a.y + ny * (o + 6)); g.lineTo(b.x + nx * (o + 6), b.y + ny * (o + 6)); g.stroke();
+            }
+            for (let d = 0; d < len; d += 26 + r() * 18) {
+                const x0 = a.x + (b.x - a.x) * d / len, y0 = a.y + (b.y - a.y) * d / len;
+                for (const sd of [-1, 1]) {
+                    const off = sd * (108 + r() * 10), sx = x0 + nx * off, sy = y0 + ny * off;
+                    if (nearBase(sx, sy, 820)) continue;
+                    if (nearRiver(sx, sy, 160)) continue;
+                    const sr = 6 + r() * 7;
+                    g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(sx + 2, sy + 3, sr, sr * 0.75, 0, 0, TAU); g.fill();
+                    const v = 100 + r() * 40 | 0;
+                    g.fillStyle = `rgb(${v},${v - 4},${v - 12})`; g.beginPath(); g.ellipse(sx, sy, sr, sr * 0.75, r() * 3, 0, TAU); g.fill();
+                    g.fillStyle = 'rgba(255,255,255,0.18)'; g.beginPath(); g.ellipse(sx - sr * 0.3, sy - sr * 0.3, sr * 0.4, sr * 0.25, 0, 0, TAU); g.fill();
+                }
+            }
+        }
+    }
+    const flowers = ['#f3e27a', '#f2f2f2', '#e98fb7', '#a8c4ff'];
+    for (let i = 0; i < 1500; i++) {
+        const x = r() * MAP, y = r() * MAP;
+        if (nearLane(x, y, 140) || nearRiver(x, y, 190) || nearBase(x, y, 880)) continue;
+        const cx = x, cy = y, col = flowers[r() * flowers.length | 0];
+        for (let j = 0; j < 3 + r() * 4; j++) {
+            g.fillStyle = col; g.globalAlpha = 0.75;
+            g.beginPath(); g.arc(cx + (r() - 0.5) * 26, cy + (r() - 0.5) * 18, 1.6 + r() * 1.6, 0, TAU); g.fill();
+        }
+        g.globalAlpha = 1;
+    }
 
     for (const team of [BLUE, RED]) {
         const b = BASE[team], col = TEAM_COLOR[team];
         const pg = g.createRadialGradient(b.x, b.y, 100, b.x, b.y, 860);
-        pg.addColorStop(0, '#9196a3'); pg.addColorStop(0.78, '#5c616d'); pg.addColorStop(1, 'rgba(60,64,72,0)');
+        pg.addColorStop(0, '#6f7482'); pg.addColorStop(0.78, '#4b505b'); pg.addColorStop(1, 'rgba(60,64,72,0)');
         g.fillStyle = pg; g.beginPath(); g.arc(b.x, b.y, 860, 0, TAU); g.fill();
         g.strokeStyle = 'rgba(25,28,36,0.35)'; g.lineWidth = 3;
         for (let rr = 160; rr < 780; rr += 110) { g.beginPath(); g.arc(b.x, b.y, rr, 0, TAU); g.stroke(); }
@@ -1225,7 +1284,7 @@ function prerenderMap() {
             g.beginPath(); g.moveTo(b.x + Math.cos(ang) * 160, b.y + Math.sin(ang) * 160); g.lineTo(b.x + Math.cos(ang) * 770, b.y + Math.sin(ang) * 770); g.stroke();
         }
         const fg = g.createRadialGradient(b.x, b.y, 20, b.x, b.y, FOUNTAIN_R);
-        fg.addColorStop(0, team === BLUE ? 'rgba(130,190,255,0.7)' : 'rgba(255,150,150,0.7)'); fg.addColorStop(1, 'rgba(0,0,0,0)');
+        fg.addColorStop(0, team === BLUE ? 'rgba(130,190,255,0.45)' : 'rgba(255,150,150,0.45)'); fg.addColorStop(1, 'rgba(0,0,0,0)');
         g.fillStyle = fg; g.beginPath(); g.arc(b.x, b.y, FOUNTAIN_R, 0, TAU); g.fill();
         g.strokeStyle = col; g.lineWidth = 6; g.setLineDash([34, 18]);
         g.beginPath(); g.arc(b.x, b.y, FOUNTAIN_R, 0, TAU); g.stroke(); g.setLineDash([]);
