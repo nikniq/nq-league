@@ -2050,14 +2050,16 @@ function create3D() {
     canvas.parentNode.insertBefore(glCanvas, canvas);
     const renderer = new T.WebGLRenderer({ canvas: glCanvas, antialias: true, powerPreference: 'high-performance' });
     renderer.outputEncoding = T.sRGBEncoding;
+    renderer.toneMapping = T.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.05;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = T.PCFSoftShadowMap;
     const scene = new T.Scene();
     scene.background = new T.Color(0x0b1410);
     const camera = new T.OrthographicCamera(-1, 1, 1, -1, 1, 6000);
 
-    scene.add(new T.HemisphereLight(0xcfe3ff, 0x34402a, 0.75));
-    const sun = new T.DirectionalLight(0xfff0d0, 1.05);
+    scene.add(new T.HemisphereLight(0xcfe3ff, 0x34402a, 0.6));
+    const sun = new T.DirectionalLight(0xfff0d0, 1.25);
     sun.castShadow = true;
     sun.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
     sun.shadow.bias = -0.0008;
@@ -2178,9 +2180,9 @@ function create3D() {
     function buildTower(u) {
         const g = new T.Group(), team = TEAM_COLOR[u.team];
         const alive = new T.Group(); g.add(alive);
-        alive.add(part(G.oct8, mat(0x80858f, { roughness: 0.85 }), 0, 12, 0, 46, 24, 46));
-        alive.add(part(G.oct8, mat(0x9aa0ab, { roughness: 0.85 }), 0, 30, 0, 34, 12, 34));
-        alive.add(part(G.cyl, mat(0xb4bac4, { roughness: 0.7 }), 0, 70, 0, 18, 70, 18));
+        alive.add(part(G.oct8, mat(0x5d626c, { roughness: 0.9 }), 0, 12, 0, 46, 24, 46));
+        alive.add(part(G.oct8, mat(0x737882, { roughness: 0.9 }), 0, 30, 0, 34, 12, 34));
+        alive.add(part(G.cyl, mat(0x8a909a, { roughness: 0.8 }), 0, 70, 0, 18, 70, 18));
         alive.add(part(G.cyl, mat(team, { metalness: 0.4 }), 0, 82, 0, 19.5, 6, 19.5));
         alive.add(part(G.oct8, mat(0x6c717b), 0, 108, 0, 24, 8, 24));
         const crystal = part(G.oct, glowMat(team), 0, 128, 0, 13, 22, 13);
@@ -2196,8 +2198,8 @@ function create3D() {
     }
     function buildNexus(u) {
         const g = new T.Group(), team = TEAM_COLOR[u.team];
-        g.add(part(G.cyl, mat(0x7d828d, { roughness: 0.85 }), 0, 10, 0, 112, 20, 112));
-        g.add(part(G.cyl, mat(0x9ba1ad, { roughness: 0.8 }), 0, 26, 0, 84, 12, 84));
+        g.add(part(G.cyl, mat(0x5d626c, { roughness: 0.9 }), 0, 10, 0, 112, 20, 112));
+        g.add(part(G.cyl, mat(0x777c86, { roughness: 0.85 }), 0, 26, 0, 84, 12, 84));
         const inner = part(G.ring, mat(team, { emissive: team, emissiveIntensity: 0.5 }), 0, 33, 0, 70); inner.rotation.x = Math.PI / 2; g.add(inner);
         const crystal = part(G.oct, glowMat(team), 0, 120, 0, 40, 75, 40); g.add(crystal);
         const r1 = part(G.ring, mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.4 }), 0, 115, 0, 85);
@@ -2214,6 +2216,7 @@ function create3D() {
         let g = meshes.get(u);
         if (!g) {
             g = u.kind === 'champ' ? buildChampion(u) : u.kind === 'minion' ? buildMinion(u) : u.kind === 'tower' ? buildTower(u) : buildNexus(u);
+            if (u.kind === 'champ') g.scale.setScalar(1.45); else if (u.kind === 'minion') g.scale.setScalar(1.25);
             meshes.set(u, g); scene.add(g);
         }
         const d = g.userData, t = world.time;
@@ -2283,9 +2286,9 @@ function create3D() {
 }
 
 // 2D overlay pieces drawn on top of the 3D scene.
-const MODEL_TOP = { champ: 2.3, minion: 2.0, tower: 150, nexus: 200 };
+const MODEL_TOP = { champ: 3.3, minion: 2.4, tower: 150, nexus: 200 };
 function overlayAt(u, top, yOff, fn) {
-    const h = Math.max(0, top - (u.r + yOff) / Math.max(SIN, 0.01) * 0.6);
+    const h = Math.max(0, top - (u.r + yOff) / Math.max(SIN, 0.01) * 0.9);
     ctx.save();
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.translate(W / 2 + shakeOff.x + (u.x - cam.x) * zoom, H / 2 + shakeOff.y + ((u.y - cam.y) * COS - h * SIN) * zoom);
