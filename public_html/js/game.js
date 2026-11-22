@@ -890,7 +890,10 @@ banner = (text) => {
     clearTimeout(bannerTimer);
     bannerTimer = setTimeout(() => el.classList.add('hidden'), 2200);
 };
+const track = (event, data) => { try { window.dataLayer && window.dataLayer.push({ event, ...data }); } catch (_) {} };
+track('match_start', { champion: cfg.champion });
 onGameOver = (victory) => {
+    track('match_end', { champion: cfg.champion, result: victory ? 'victory' : 'defeat', kills: player.kills, deaths: player.deaths, duration_seconds: Math.round(world.time) });
     $('ov-title').textContent = victory ? 'Victory' : 'Defeat';
     $('ov-title').style.color = victory ? '#3fd18b' : '#ff5a5a';
     $('ov-text').textContent = `${player.def.name} · ${player.kills}/${player.deaths} · ${player.cs} CS · Level ${player.level} · ${fmtTime(world.time)}`;

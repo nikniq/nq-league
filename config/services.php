@@ -36,6 +36,11 @@ return [
     ],
 
     // Sign in with Google (Laravel Socialite). Leave empty to hide the button.
+    // Google Tag Manager container (loads Google Analytics). Empty disables it.
+    'gtm' => [
+        'id' => env('GTM_ID', 'GTM-WBDVR857'),
+    ],
+
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),

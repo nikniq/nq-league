@@ -9,9 +9,21 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <meta name="description" content="Nexus Quest League – a free 3v3 battle arena you play right in your browser. No download, desktop and mobile.">
     <title>@yield('title', config('app.name'))</title>
+    @if (config('services.gtm.id') && app()->isProduction())
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        dataLayer.push({'gtm.start': new Date().getTime(), event: 'gtm.js'});
+    </script>
+    <script async src="https://www.googletagmanager.com/gtm.js?id={{ config('services.gtm.id') }}"></script>
+    @endif
     <link rel="stylesheet" href="{{ asset('css/game.css') }}?v={{ filemtime(public_path('css/game.css')) }}">
 </head>
 <body class="@yield('body-class')">
+    @if (config('services.gtm.id') && app()->isProduction())
+    <noscript><iframe src="https://www.googletagmanager.com/ns.html?id={{ config('services.gtm.id') }}" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+    @endif
     @unless (View::hasSection('bare'))
     <header class="site-head">
         <div class="wrap">
