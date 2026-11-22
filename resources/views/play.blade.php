@@ -15,6 +15,7 @@
         <span class="team red" id="score-red">0</span>
     </div>
     <div id="feed"></div>
+    <button type="button" id="view-toggle" class="view-toggle" title="Toggle 3D / 2D view (G)">3D</button>
 
     <div class="bottom">
         <div class="stats">
@@ -91,5 +92,6 @@
         saveUrl: @json(route('matches.store')),
     };
 </script>
+<script src="{{ asset('js/vendor/three.min.js') }}"></script>
 <script src="{{ asset('js/game.js') }}?v={{ filemtime(public_path('js/game.js')) }}"></script>
 @endpush

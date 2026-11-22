@@ -797,6 +797,19 @@ const cam = { x: 0, y: 0, locked: true };
 const mouse = { x: 0, y: 0, sx: 0, sy: 0, inside: true };
 let paused = false;
 let W = 0, H = 0, DPR = 1;
+// View mode: '3d' renders the world with WebGL (Three.js) under the 2D effects layer.
+const TILT = 0.6;
+let use3D = false, COS = 1, SIN = 0;
+const webglOK = (() => { try { const c = document.createElement('canvas'); return !!(window.THREE && (c.getContext('webgl2') || c.getContext('webgl'))); } catch (_) { return false; } })();
+(() => {
+    let pref = null;
+    try { pref = localStorage.getItem('nq-view'); } catch (_) {}
+    if (/[?&]view=2d/.test(location.search)) pref = '2d';
+    if (/[?&]view=3d/.test(location.search)) pref = '3d';
+    use3D = webglOK && pref !== '2d';
+    COS = use3D ? Math.cos(TILT) : 1; SIN = use3D ? Math.sin(TILT) : 0;
+})();
+const lift = (h) => h * SIN / COS;
 let hoverAbility = -1;
 
 setupGame(cfg);
@@ -848,7 +861,7 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-const toWorld = (sx, sy) => ({ x: (sx - W / 2) / zoom + cam.x, y: (sy - H / 2) / zoom + cam.y });
+const toWorld = (sx, sy) => ({ x: (sx - W / 2) / zoom + cam.x, y: (sy - H / 2) / (zoom * COS) + cam.y });
 const minimapRect = () => {
     if (isTouch) { const s = Math.min(130, Math.min(W, H) * 0.3); return { x: 10, y: 10, s }; }
     const s = Math.min(200, W * 0.28); return { x: W - s - 12, y: H - s - 12, s };
@@ -901,12 +914,18 @@ window.addEventListener('keydown', (e) => {
     else if (k === 'd' || k === 'f') flash(player, w.x, w.y);
     else if (k === 'b') { if (player.alive && !inFountain(player, player.team)) { player.recall = 8; player.order = null; } }
     else if (k === 'p') toggleShop();
+    else if (k === 'g') setView(use3D ? '2d' : '3d');
     else if (k === 'y') { cam.locked = !cam.locked; banner(cam.locked ? 'Camera locked' : 'Camera unlocked'); }
     else if (k === 's') { player.order = null; player.recall = 0; }
     else if (k === 'a') { const t = nearestEnemy(player, 600); if (t) player.order = { type: 'attack', target: t }; }
 });
 window.addEventListener('keyup', (e) => keysDown.delete(e.key.toLowerCase()));
 
+if ($('view-toggle')) {
+    $('view-toggle').textContent = use3D ? '2D' : '3D';
+    if (!webglOK) $('view-toggle').classList.add('hidden');
+    $('view-toggle').addEventListener('click', (e) => { setView(use3D ? '2d' : '3d'); e.currentTarget.blur(); });
+}
 $('d-shop') && $('d-shop').addEventListener('click', () => { toggleShop(); $('d-shop').blur(); });
 $('shop-close').addEventListener('click', () => $('shop').classList.add('hidden'));
 function toggleShop() {
@@ -1178,7 +1197,7 @@ const decor = (() => {
     return { trees, rocks, bushes };
 })();
 
-function prerenderMap() {
+function prerenderMap(props = true) {
     const c = document.createElement('canvas');
     c.width = c.height = Math.round(MAP * MAP_SCALE);
     const g = c.getContext('2d');
@@ -1309,12 +1328,12 @@ function prerenderMap() {
             g.fillStyle = bg; g.beginPath(); g.arc(x, y, rr, 0, TAU); g.fill();
         }
     }
-    for (const k of decor.rocks) {
+    if (props) for (const k of decor.rocks) {
         g.fillStyle = 'rgba(0,0,0,0.3)'; g.beginPath(); g.ellipse(k.x + 3, k.y + 4, k.r, k.r * 0.7, 0, 0, TAU); g.fill();
         g.fillStyle = '#7a7d85'; g.beginPath(); g.ellipse(k.x, k.y, k.r, k.r * 0.75, 0, 0, TAU); g.fill();
         g.fillStyle = 'rgba(255,255,255,0.2)'; g.beginPath(); g.ellipse(k.x - k.r * 0.3, k.y - k.r * 0.3, k.r * 0.4, k.r * 0.28, 0, 0, TAU); g.fill();
     }
-    for (const t of decor.trees) {
+    if (props) for (const t of decor.trees) {
         g.fillStyle = 'rgba(0,0,0,0.35)'; g.beginPath(); g.ellipse(t.x + t.r * 0.4, t.y + t.r * 0.5, t.r * 1.1, t.r * 0.75, 0, 0, TAU); g.fill();
         g.fillStyle = '#4a3420'; g.fillRect(t.x - 4, t.y, 8, t.r * 0.5);
         const h = 105 + t.hue * 35;
@@ -1327,13 +1346,14 @@ function prerenderMap() {
     }
     return c;
 }
-const mapCanvas = prerenderMap();
+const mapCache = {};
+const getMap = (props) => mapCache[props] || (mapCache[props] = prerenderMap(props));
 
 function drawMap(view) {
     const sx = Math.max(0, view.x0), sy = Math.max(0, view.y0);
     const ex = Math.min(MAP, view.x1), ey = Math.min(MAP, view.y1);
     ctx.fillStyle = '#0d1a10'; ctx.fillRect(view.x0, view.y0, view.x1 - view.x0, view.y1 - view.y0);
-    if (ex > sx && ey > sy) ctx.drawImage(mapCanvas, sx * MAP_SCALE, sy * MAP_SCALE, (ex - sx) * MAP_SCALE, (ey - sy) * MAP_SCALE, sx, sy, ex - sx, ey - sy);
+    if (ex > sx && ey > sy) ctx.drawImage(getMap(true), sx * MAP_SCALE, sy * MAP_SCALE, (ex - sx) * MAP_SCALE, (ey - sy) * MAP_SCALE, sx, sy, ex - sx, ey - sy);
     // Moving glints on the river.
     ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < 40; i++) {
@@ -1552,6 +1572,10 @@ function drawChampion(u, dt) {
         }
     }
 
+    champLabel(u, dt);
+}
+function champLabel(u, dt) {
+    const ally = u.team === player.team;
     const bar = hpBar(u, 74, 22, u.isPlayer ? '#4fd16a' : ally ? '#4f8cff' : '#e84a4a', { ticks: true, mana: true, h: 7, dt });
     circle(bar.x - 9, bar.y + 4, 9, '#0b111d');
     ctx.strokeStyle = '#c8a95a'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(bar.x - 9, bar.y + 4, 9, 0, TAU); ctx.stroke();
@@ -1736,11 +1760,11 @@ function drawTowerBeams() {
         if (u.kind !== 'tower' || !u.alive || !u.order || !u.order.target) continue;
         const t = u.order.target;
         if (!t.alive || Math.hypot(t.x - u.x, t.y - u.y) > u.range + t.r + 10) continue;
-        const cy = u.y - 72 + Math.sin(world.time * 2 + u.id) * 4;
+        const cy = use3D ? u.y - lift(125) : u.y - 72 + Math.sin(world.time * 2 + u.id) * 4;
         const col = t === player ? 'rgba(255,70,70,' : u.team === player.team ? 'rgba(110,170,255,' : 'rgba(255,120,120,';
         const fl = 0.5 + 0.5 * Math.sin(world.time * 30 + u.id);
         ctx.strokeStyle = col + (0.18 + fl * 0.12) + ')'; ctx.lineWidth = 7;
-        ctx.beginPath(); ctx.moveTo(u.x, cy); ctx.lineTo(t.x, t.y - t.r * 0.3); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(u.x, cy); ctx.lineTo(t.x, t.y - (use3D ? lift(t.r * 1.2) : t.r * 0.3)); ctx.stroke();
         ctx.strokeStyle = col + (0.55 + fl * 0.3) + ')'; ctx.lineWidth = 1.5; ctx.stroke();
         glow(t.x, t.y - t.r * 0.3, t.r * 1.2, col + '0.9)', 0.35 + fl * 0.2);
     }
@@ -1927,8 +1951,10 @@ function drawEffects() {
             const s = (big ? 1.5 : 1) + Math.max(0, 0.3 - k) * (big ? 3 : 2);
             ctx.font = `800 ${Math.round(15 * s)}px system-ui`; ctx.textAlign = 'center';
             ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.8)';
-            ctx.strokeText(e.r, e.x, e.y - k * 46);
-            ctx.fillStyle = e.color; ctx.fillText(e.r, e.x, e.y - k * 46);
+            ctx.save(); ctx.translate(e.x, e.y - k * 46 - lift(60)); ctx.scale(1, 1 / COS);
+            ctx.strokeText(e.r, 0, 0);
+            ctx.fillStyle = e.color; ctx.fillText(e.r, 0, 0);
+            ctx.restore();
         }
         ctx.globalAlpha = 1;
     }
@@ -1964,7 +1990,7 @@ function drawRangeIndicator() {
 const miniCanvas = (() => {
     const c = document.createElement('canvas');
     c.width = c.height = 240;
-    c.getContext('2d').drawImage(mapCanvas, 0, 0, 240, 240);
+    c.getContext('2d').drawImage(getMap(!use3D), 0, 0, 240, 240);
     return c;
 })();
 
@@ -1987,7 +2013,7 @@ function drawMinimap() {
         ctx.lineWidth = 34; ctx.strokeStyle = u.isPlayer ? '#ffd75a' : TEAM_COLOR[u.team]; ctx.stroke();
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 18;
-    ctx.strokeRect(cam.x - W / 2 / zoom, cam.y - H / 2 / zoom, W / zoom, H / zoom);
+    ctx.strokeRect(cam.x - W / 2 / zoom, cam.y - H / 2 / zoom / COS, W / zoom, H / zoom / COS);
     ctx.restore();
 }
 
@@ -2009,33 +2035,369 @@ function drawVignette() {
     }
 }
 
+// ---------- 3D renderer (Three.js) ----------
+// The simulation stays 2D (x, y on the ground). Three.js draws the world with an orthographic
+// camera tilted by TILT, so a ground point maps to the screen with a simple y-scale (COS) and a
+// height h lifts it by h * SIN. That lets the 2D canvas draw effects on top in matching coordinates.
+const shakeOff = { x: 0, y: 0 };
+let r3dInst = null;
+const r3d = () => r3dInst || (r3dInst = create3D());
+
+function create3D() {
+    const T = window.THREE;
+    const glCanvas = document.createElement('canvas');
+    glCanvas.id = 'game3d';
+    canvas.parentNode.insertBefore(glCanvas, canvas);
+    const renderer = new T.WebGLRenderer({ canvas: glCanvas, antialias: true, powerPreference: 'high-performance' });
+    renderer.outputEncoding = T.sRGBEncoding;
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = T.PCFSoftShadowMap;
+    const scene = new T.Scene();
+    scene.background = new T.Color(0x0b1410);
+    const camera = new T.OrthographicCamera(-1, 1, 1, -1, 1, 6000);
+
+    scene.add(new T.HemisphereLight(0xcfe3ff, 0x34402a, 0.75));
+    const sun = new T.DirectionalLight(0xfff0d0, 1.05);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
+    sun.shadow.bias = -0.0008;
+    sun.shadow.normalBias = 1.5;
+    scene.add(sun, sun.target);
+
+    // Ground: the pre-rendered 2D map (without trees and rocks) as a texture.
+    const tex = new T.CanvasTexture(getMap(false));
+    tex.encoding = T.sRGBEncoding;
+    tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    const ground = new T.Mesh(new T.PlaneGeometry(MAP, MAP), new T.MeshLambertMaterial({ map: tex }));
+    ground.rotation.x = -Math.PI / 2; ground.position.set(MAP / 2, 0, MAP / 2); ground.receiveShadow = true;
+    scene.add(ground);
+    const outer = new T.Mesh(new T.PlaneGeometry(MAP * 3, MAP * 3), new T.MeshLambertMaterial({ color: 0x14261a }));
+    outer.rotation.x = -Math.PI / 2; outer.position.set(MAP / 2, -2, MAP / 2);
+    scene.add(outer);
+    // River surface: a glossy translucent strip that catches the sun.
+    const water = new T.Mesh(new T.PlaneGeometry(MAP * Math.SQRT2 + 400, 250),
+        new T.MeshPhongMaterial({ color: 0x3aa0d0, transparent: true, opacity: 0.28, shininess: 90, specular: 0xbfe8ff }));
+    water.rotation.x = -Math.PI / 2; water.rotation.z = -Math.PI / 4; water.position.set(MAP / 2, 3, MAP / 2);
+    scene.add(water);
+
+    // Trees and rocks as instanced meshes.
+    const m4 = new T.Matrix4(), q = new T.Quaternion(), v = new T.Vector3(), sc = new T.Vector3(), col = new T.Color();
+    const trees = decor.trees;
+    const trunk = new T.InstancedMesh(new T.CylinderGeometry(0.12, 0.18, 1, 6), new T.MeshLambertMaterial({ color: 0x5a3b22 }), trees.length);
+    const canopyGeo = new T.IcosahedronGeometry(1, 1);
+    const canopy = new T.InstancedMesh(canopyGeo, new T.MeshLambertMaterial({ flatShading: true }), trees.length * 2);
+    trees.forEach((t, i) => {
+        const h = t.r * 1.4;
+        m4.compose(v.set(t.x, h * 0.5, t.y), q.identity(), sc.set(t.r, h, t.r)); trunk.setMatrixAt(i, m4);
+        const hue = (105 + t.hue * 35) / 360;
+        m4.compose(v.set(t.x, h + t.r * 0.55, t.y), q.setFromEuler(new T.Euler(0, t.hue * 6, 0)), sc.set(t.r * 1.15, t.r * 0.95, t.r * 1.15));
+        canopy.setMatrixAt(i * 2, m4); canopy.setColorAt(i * 2, col.setHSL(hue, 0.5, 0.24));
+        m4.compose(v.set(t.x + t.r * 0.25, h + t.r * 1.25, t.y - t.r * 0.2), q, sc.set(t.r * 0.75, t.r * 0.7, t.r * 0.75));
+        canopy.setMatrixAt(i * 2 + 1, m4); canopy.setColorAt(i * 2 + 1, col.setHSL(hue, 0.45, 0.32));
+    });
+    trunk.castShadow = canopy.castShadow = true; canopy.receiveShadow = true;
+    scene.add(trunk, canopy);
+    const rocks = new T.InstancedMesh(new T.DodecahedronGeometry(1, 0), new T.MeshLambertMaterial({ color: 0x8a8d95, flatShading: true }), decor.rocks.length);
+    decor.rocks.forEach((k, i) => {
+        m4.compose(v.set(k.x, k.r * 0.3, k.y), q.setFromEuler(new T.Euler(k.x % 3, k.y % 3, 0)), sc.set(k.r, k.r * 0.7, k.r * 0.85));
+        rocks.setMatrixAt(i, m4);
+    });
+    rocks.castShadow = rocks.receiveShadow = true;
+    scene.add(rocks);
+
+    // Shared materials and geometry for units.
+    const mats = {};
+    const mat = (color, opts = {}) => {
+        const key = color + JSON.stringify(opts);
+        return mats[key] || (mats[key] = new T.MeshStandardMaterial({ color, roughness: 0.6, metalness: 0.1, ...opts }));
+    };
+    const glowMat = (color) => mat(color, { emissive: color, emissiveIntensity: 0.9, roughness: 0.25 });
+    const G = {
+        box: new T.BoxGeometry(1, 1, 1), sphere: new T.SphereGeometry(1, 16, 12), cyl: new T.CylinderGeometry(1, 1, 1, 14),
+        cone: new T.ConeGeometry(1, 1, 14), oct: new T.OctahedronGeometry(1, 0), ring: new T.TorusGeometry(1, 0.06, 6, 40),
+        oct8: new T.CylinderGeometry(1, 1.12, 1, 8), dome: new T.SphereGeometry(1, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2),
+        bow: new T.TorusGeometry(1, 0.08, 6, 20, Math.PI),
+    };
+    const part = (g, m, x, y, z, sx, sy, sz) => {
+        const o = new T.Mesh(g, m); o.position.set(x, y, z); o.scale.set(sx, sy ?? sx, sz ?? sx);
+        o.castShadow = true; o.receiveShadow = true; return o;
+    };
+
+    function buildChampion(u) {
+        const g = new T.Group(), r = u.r, team = TEAM_COLOR[u.team], body = u.def.color;
+        const rig = new T.Group(); g.add(rig);
+        rig.add(part(G.cyl, mat(0x2a2f3a), -r * 0.05, r * 0.35, -r * 0.25, r * 0.16, r * 0.7, r * 0.16));
+        rig.add(part(G.cyl, mat(0x2a2f3a), -r * 0.05, r * 0.35, r * 0.25, r * 0.16, r * 0.7, r * 0.16));
+        rig.add(part(G.cyl, mat(body), 0, r * 1.05, 0, r * 0.5, r * 0.85, r * 0.42));
+        rig.add(part(G.sphere, mat(0xd8dde6, { metalness: 0.6, roughness: 0.3 }), 0, r * 1.38, -r * 0.52, r * 0.24));
+        rig.add(part(G.sphere, mat(0xd8dde6, { metalness: 0.6, roughness: 0.3 }), 0, r * 1.38, r * 0.52, r * 0.24));
+        const cape = part(G.box, mat(shade(team, -0.3)), -r * 0.42, r * 0.95, 0, r * 0.08, r * 1.1, r * 0.85);
+        cape.rotation.z = -0.18; rig.add(cape);
+        const headCol = u.key === 'arcanist' ? 0x5b3596 : u.key === 'ranger' ? 0x2f7a3c : 0xc9ced8;
+        rig.add(part(G.sphere, mat(headCol, u.key === 'vanguard' ? { metalness: 0.7, roughness: 0.3 } : {}), r * 0.05, r * 1.72, 0, r * 0.34));
+        if (u.key === 'arcanist') rig.add(part(G.cone, mat(0x3f2470), 0, r * 2.15, 0, r * 0.32, r * 0.6, r * 0.32));
+        if (u.key === 'ranger') { const h = part(G.cone, mat(0x24602f), -r * 0.08, r * 1.95, 0, r * 0.36, r * 0.4, r * 0.36); rig.add(h); }
+        if (u.key === 'vanguard') rig.add(part(G.box, mat(0x1a1f2a), r * 0.36, r * 1.74, 0, r * 0.06, r * 0.08, r * 0.3));
+        const arm = new T.Group(); arm.position.set(0, r * 1.15, r * 0.55); rig.add(arm);
+        if (u.key === 'vanguard') {
+            arm.add(part(G.box, mat(0xe6ebf2, { metalness: 0.8, roughness: 0.2 }), r * 0.75, 0, 0, r * 1.3, r * 0.08, r * 0.16));
+            arm.add(part(G.box, mat(0xc8a95a, { metalness: 0.7 }), r * 0.1, 0, 0, r * 0.1, r * 0.12, r * 0.4));
+            const shield = part(G.cyl, mat(shade(team, -0.1), { metalness: 0.5 }), r * 0.3, r * 1.1, -r * 0.62, r * 0.42, r * 0.08, r * 0.42);
+            shield.rotation.z = Math.PI / 2; rig.add(shield);
+        } else if (u.key === 'arcanist') {
+            arm.add(part(G.cyl, mat(0x6b4a2a), r * 0.2, r * 0.2, 0, r * 0.06, r * 1.9, r * 0.06));
+            arm.add(part(G.sphere, glowMat(0xd7a8ff), r * 0.2, r * 1.2, 0, r * 0.2));
+        } else {
+            const bow = part(G.bow, mat(0x8a5a2b), r * 0.55, 0, -r * 0.2, r * 0.75);
+            bow.rotation.x = Math.PI / 2; bow.rotation.z = -Math.PI / 2; arm.add(bow);
+        }
+        const ring = part(G.ring, new T.MeshBasicMaterial({ color: u.isPlayer ? 0xffd75a : u.team === player.team ? 0x4f8cff : 0xff5a5a }), 0, 2, 0, r * 1.25);
+        ring.rotation.x = Math.PI / 2; ring.castShadow = false; g.add(ring);
+        const bubble = part(G.sphere, new T.MeshStandardMaterial({ color: 0xa0d2ff, transparent: true, opacity: 0.28, emissive: 0x6aa8ff, emissiveIntensity: 0.4 }), 0, r * 1.1, 0, r * 1.5);
+        bubble.castShadow = false; bubble.visible = false; g.add(bubble);
+        g.userData = { rig, arm, ring, bubble };
+        return g;
+    }
+    function buildMinion(u) {
+        const g = new T.Group(), r = u.r, team = TEAM_COLOR[u.team];
+        const rig = new T.Group(); g.add(rig);
+        if (u.mtype === 'cannon') {
+            rig.add(part(G.box, mat(0x3b3f48), 0, r * 0.5, 0, r * 1.7, r * 0.7, r * 1.3));
+            rig.add(part(G.box, mat(team), 0, r * 1.0, 0, r * 1.2, r * 0.4, r * 1.0));
+            const barrel = part(G.cyl, mat(0x22252c, { metalness: 0.7 }), r * 0.9, r * 1.05, 0, r * 0.22, r * 1.2, r * 0.22);
+            barrel.rotation.z = Math.PI / 2; rig.add(barrel);
+        } else {
+            rig.add(part(G.sphere, mat(team), 0, r * 0.8, 0, r * 0.75, r * 0.8, r * 0.75));
+            rig.add(part(G.sphere, mat(0x2a2f3a), r * 0.2, r * 1.55, 0, r * 0.42));
+            if (u.mtype === 'melee') rig.add(part(G.box, mat(0xd8dde6, { metalness: 0.7 }), r * 0.7, r * 0.9, r * 0.6, r * 0.9, r * 0.1, r * 0.14));
+            else { rig.add(part(G.cone, mat(shade(team, -0.3)), r * 0.15, r * 2.05, 0, r * 0.38, r * 0.7, r * 0.38)); rig.add(part(G.sphere, glowMat(0xffe08a), r * 0.75, r * 1.0, r * 0.5, r * 0.18)); }
+        }
+        g.userData = { rig };
+        return g;
+    }
+    function buildTower(u) {
+        const g = new T.Group(), team = TEAM_COLOR[u.team];
+        const alive = new T.Group(); g.add(alive);
+        alive.add(part(G.oct8, mat(0x80858f, { roughness: 0.85 }), 0, 12, 0, 46, 24, 46));
+        alive.add(part(G.oct8, mat(0x9aa0ab, { roughness: 0.85 }), 0, 30, 0, 34, 12, 34));
+        alive.add(part(G.cyl, mat(0xb4bac4, { roughness: 0.7 }), 0, 70, 0, 18, 70, 18));
+        alive.add(part(G.cyl, mat(team, { metalness: 0.4 }), 0, 82, 0, 19.5, 6, 19.5));
+        alive.add(part(G.oct8, mat(0x6c717b), 0, 108, 0, 24, 8, 24));
+        const crystal = part(G.oct, glowMat(team), 0, 128, 0, 13, 22, 13);
+        crystal.castShadow = false; alive.add(crystal);
+        const rubble = new T.Group(); g.add(rubble); rubble.visible = false;
+        const rr = rng(u.id * 97);
+        for (let i = 0; i < 10; i++) {
+            const b = part(G.box, mat(i % 2 ? 0x4c4f57 : 0x6a6e77), (rr() - 0.5) * 80, 5 + rr() * 8, (rr() - 0.5) * 60, 10 + rr() * 16, 8 + rr() * 10, 10 + rr() * 14);
+            b.rotation.set(rr() * 2, rr() * 3, rr()); rubble.add(b);
+        }
+        g.userData = { alive, rubble, crystal };
+        return g;
+    }
+    function buildNexus(u) {
+        const g = new T.Group(), team = TEAM_COLOR[u.team];
+        g.add(part(G.cyl, mat(0x7d828d, { roughness: 0.85 }), 0, 10, 0, 112, 20, 112));
+        g.add(part(G.cyl, mat(0x9ba1ad, { roughness: 0.8 }), 0, 26, 0, 84, 12, 84));
+        const inner = part(G.ring, mat(team, { emissive: team, emissiveIntensity: 0.5 }), 0, 33, 0, 70); inner.rotation.x = Math.PI / 2; g.add(inner);
+        const crystal = part(G.oct, glowMat(team), 0, 120, 0, 40, 75, 40); g.add(crystal);
+        const r1 = part(G.ring, mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.4 }), 0, 115, 0, 85);
+        const r2 = part(G.ring, mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.4 }), 0, 115, 0, 66);
+        r1.castShadow = r2.castShadow = false; g.add(r1, r2);
+        const dome = part(G.dome, new T.MeshStandardMaterial({ color: 0xc8dcff, transparent: true, opacity: 0.16, emissive: 0x88aaff, emissiveIntensity: 0.3, depthWrite: false }), 0, 0, 0, 140);
+        dome.castShadow = false; g.add(dome);
+        g.userData = { crystal, r1, r2, dome };
+        return g;
+    }
+
+    const meshes = new Map();
+    function sync(u, dt) {
+        let g = meshes.get(u);
+        if (!g) {
+            g = u.kind === 'champ' ? buildChampion(u) : u.kind === 'minion' ? buildMinion(u) : u.kind === 'tower' ? buildTower(u) : buildNexus(u);
+            meshes.set(u, g); scene.add(g);
+        }
+        const d = g.userData, t = world.time;
+        g.visible = true;
+        g.position.set(u.x, 0, u.y);
+        if (u.kind === 'champ' || u.kind === 'minion') {
+            g.visible = u.alive;
+            if (!u.alive) return;
+            const moving = (u.spd || 0) > 5;
+            const bob = moving ? Math.abs(Math.sin((u.walkT || 0) * (u.kind === 'champ' ? 12 : 14) + u.id)) * (u.kind === 'champ' ? 4 : 2.5) : 0;
+            d.rig.position.y = bob;
+            const facing = u.spin > 0 ? t * 22 : (u.facing ?? (u.team === BLUE ? -Math.PI / 4 : Math.PI * 0.75));
+            d.rig.rotation.y = -facing;
+            if (u.kind === 'champ') {
+                d.rig.rotation.z = moving ? -0.12 : 0;
+                const a = u.atkAnim > 0 ? Math.sin((1 - u.atkAnim / 0.25) * Math.PI) : 0;
+                d.arm.rotation.y = u.key === 'vanguard' ? -a * 1.6 + 0.4 : -a * 0.5;
+                d.ring.visible = true;
+                d.ring.scale.setScalar(u.r * (1.25 + (u.isPlayer ? 0.06 * Math.sin(t * 4) : 0)));
+                d.bubble.visible = u.shield > 0;
+            }
+        } else if (u.kind === 'tower') {
+            d.alive.visible = u.alive; d.rubble.visible = !u.alive;
+            d.crystal.position.y = 128 + Math.sin(t * 2 + u.id) * 5;
+            d.crystal.rotation.y = t * 1.2;
+        } else {
+            d.crystal.visible = d.r1.visible = d.r2.visible = u.alive;
+            d.crystal.position.y = 120 + Math.sin(t * 1.5) * 6; d.crystal.rotation.y = t * 0.6;
+            d.r1.rotation.set(Math.PI / 2 + Math.sin(t * 0.7) * 0.35, t * 0.6, 0);
+            d.r2.rotation.set(Math.PI / 2 + Math.cos(t * 0.9) * 0.35, -t * 0.9, 0);
+            d.dome.visible = u.alive && isInvulnerable(u);
+        }
+    }
+
+    let lastW = 0, lastH = 0, lastZ = 0;
+    const target = new T.Vector3();
+    return {
+        canvas: glCanvas,
+        render(view, dt) {
+            if (W !== lastW || H !== lastH || zoom !== lastZ) {
+                lastW = W; lastH = H; lastZ = zoom;
+                renderer.setPixelRatio(Math.min(DPR, isTouch ? 1.5 : 2));
+                renderer.setSize(W, H, false);
+                camera.left = -W / 2 / zoom; camera.right = W / 2 / zoom; camera.top = H / 2 / zoom; camera.bottom = -H / 2 / zoom;
+                camera.updateProjectionMatrix();
+                const ext = Math.max(W, H) / zoom * 0.75;
+                Object.assign(sun.shadow.camera, { left: -ext, right: ext, top: ext, bottom: -ext, near: 10, far: 5000 });
+                sun.shadow.camera.updateProjectionMatrix();
+            }
+            target.set(Math.round(cam.x) - shakeOff.x / zoom, 0, Math.round(cam.y) - shakeOff.y / zoom / COS);
+            camera.position.set(target.x, target.y + 2500 * Math.cos(TILT), target.z + 2500 * Math.sin(TILT));
+            camera.lookAt(target);
+            sun.position.set(target.x - 900, 1800, target.z - 700); sun.target.position.copy(target);
+            water.material.opacity = 0.24 + 0.05 * Math.sin(world.time * 1.3);
+            const seen = new Set();
+            for (const u of world.units) {
+                const near = u.x > view.x0 - 400 && u.x < view.x1 + 400 && u.y > view.y0 - 400 && u.y < view.y1 + 600;
+                if (!near) { const g = meshes.get(u); if (g) g.visible = false; continue; }
+                sync(u, dt); seen.add(u);
+            }
+            // Drop meshes of units that no longer exist (dead minions are removed from the world).
+            for (const [u, g] of meshes) if (!world.units.includes(u)) { scene.remove(g); meshes.delete(u); }
+            renderer.render(scene, camera);
+        },
+        show(on) { glCanvas.style.display = on ? 'block' : 'none'; },
+    };
+}
+
+// 2D overlay pieces drawn on top of the 3D scene.
+const MODEL_TOP = { champ: 2.3, minion: 2.0, tower: 150, nexus: 200 };
+function overlayAt(u, top, yOff, fn) {
+    const h = Math.max(0, top - (u.r + yOff) / Math.max(SIN, 0.01) * 0.6);
+    ctx.save();
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.translate(W / 2 + shakeOff.x + (u.x - cam.x) * zoom, H / 2 + shakeOff.y + ((u.y - cam.y) * COS - h * SIN) * zoom);
+    ctx.scale(zoom, zoom); ctx.translate(-u.x, -u.y);
+    fn();
+    ctx.restore();
+}
+function drawOverlay3D(u, dt) {
+    if (u.kind === 'champ' || u.kind === 'minion') walkPhase(u, dt);
+    if (u.kind === 'tower' && u.alive && u.team !== player.team && dist(player, u) < u.range + 300) {
+        const danger = u.order && u.order.target === player;
+        ctx.strokeStyle = danger ? 'rgba(255,60,60,0.85)' : 'rgba(255,90,90,0.35)'; ctx.lineWidth = danger ? 4 : 2.5;
+        ctx.setLineDash([16, 10]); ctx.beginPath(); ctx.arc(u.x, u.y, u.range, 0, TAU); ctx.stroke(); ctx.setLineDash([]);
+    }
+    if (!u.alive) return;
+    if (u.kind === 'champ') {
+        if (u.rapid > 0) { ctx.globalCompositeOperation = 'lighter'; glow(u.x, u.y, u.r * 2, 'rgba(80,255,150,0.5)', 0.5); ctx.globalCompositeOperation = 'source-over'; }
+        if (u.spin > 0) {
+            ctx.globalCompositeOperation = 'lighter';
+            for (let i = 0; i < 3; i++) {
+                const a = world.time * 16 + i * 2.1;
+                ctx.strokeStyle = `rgba(255,215,90,${0.5 - i * 0.12})`; ctx.lineWidth = 6 - i;
+                ctx.beginPath(); ctx.arc(u.x, u.y, 140 + i * 28, a, a + 1.2); ctx.stroke();
+            }
+            ctx.globalCompositeOperation = 'source-over';
+        }
+        if (u.recall > 0) {
+            const k = 1 - u.recall / 8;
+            ctx.strokeStyle = '#7fb4ff'; ctx.lineWidth = 4;
+            ctx.beginPath(); ctx.arc(u.x, u.y, u.r + 16, -Math.PI / 2, -Math.PI / 2 + TAU * k); ctx.stroke();
+            if (Math.random() < 0.5) emit(u.x + (Math.random() - 0.5) * u.r * 2, u.y + u.r * 0.5, 1, 'rgba(120,180,255,0.9)', 20, 0.8, 3, -160);
+        }
+    }
+    if (u.flashT > 0) {
+        u.flashT -= dt;
+        ctx.globalCompositeOperation = 'lighter';
+        glow(u.x, u.y - lift(u.kind === 'champ' ? u.r : 20), u.r * 2.2, 'rgba(255,255,255,0.8)', Math.max(0, u.flashT / 0.12) * 0.7);
+        ctx.globalCompositeOperation = 'source-over';
+    }
+    overlayQueue.push(u);
+}
+const overlayQueue = [];
+function drawLabels3D(dt) {
+    for (const u of overlayQueue) {
+        const ally = u.team === player.team;
+        if (u.kind === 'champ') {
+            overlayAt(u, u.r * MODEL_TOP.champ, 22, () => {
+                champLabel(u, dt);
+                if (u.stun > 0) for (let i = 0; i < 3; i++) {
+                    const a = world.time * 6 + i * TAU / 3;
+                    ctx.fillStyle = '#ffe98a'; ctx.font = '14px system-ui'; ctx.textAlign = 'center';
+                    ctx.fillText('★', u.x + Math.cos(a) * 18, u.y - u.r - 34 + Math.sin(a) * 5);
+                }
+            });
+        } else if (u.kind === 'minion') {
+            if (u.hp < u.maxHp) overlayAt(u, u.r * MODEL_TOP.minion, 8, () => hpBar(u, 32, 8, ally ? '#4fd16a' : '#e84a4a', { h: 4, dt }));
+        } else if (u.kind === 'tower') {
+            overlayAt(u, MODEL_TOP.tower, 0, () => hpBar(u, 84, 0, ally ? '#4fd16a' : '#e84a4a', { ticks: true, h: 7, dt }));
+        } else {
+            const saved = u.r; u.r = 60;
+            overlayAt(u, MODEL_TOP.nexus, 0, () => hpBar(u, 150, 0, ally ? '#4fd16a' : '#e84a4a', { ticks: true, h: 9, dt }));
+            u.r = saved;
+        }
+    }
+    overlayQueue.length = 0;
+}
+
+function setView(mode) {
+    const want3D = mode === '3d' && webglOK;
+    if (want3D === use3D) return;
+    use3D = want3D;
+    COS = use3D ? Math.cos(TILT) : 1; SIN = use3D ? Math.sin(TILT) : 0;
+    try { localStorage.setItem('nq-view', use3D ? '3d' : '2d'); } catch (_) {}
+    if (use3D) r3d().show(true); else if (r3dInst) r3dInst.show(false);
+    miniCanvas.getContext('2d').drawImage(getMap(!use3D), 0, 0, 240, 240);
+    const b = $('view-toggle'); if (b) b.textContent = use3D ? '2D' : '3D';
+    banner(use3D ? '3D view' : '2D view');
+}
+
 function render(dt) {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.save();
     let sx = 0, sy = 0;
     if (shakeT > 0) { shakeT -= dt; const m = shakeMag * Math.max(0, shakeT) / 0.3; sx = (Math.random() - 0.5) * 2 * Math.min(m, shakeMag); sy = (Math.random() - 0.5) * 2 * Math.min(m, shakeMag); if (shakeT <= 0) shakeMag = 0; }
-    ctx.translate(W / 2 + sx, H / 2 + sy); ctx.scale(zoom, zoom); ctx.translate(-Math.round(cam.x), -Math.round(cam.y));
-    const hw = W / 2 / zoom, hh = H / 2 / zoom;
+    shakeOff.x = sx; shakeOff.y = sy;
+    const hw = W / 2 / zoom, hh = H / 2 / zoom / COS;
     const view = { x0: cam.x - hw, x1: cam.x + hw, y0: cam.y - hh, y1: cam.y + hh };
-    drawMap(view);
+    if (use3D) { ctx.clearRect(0, 0, W, H); r3d().render(view, dt); }
+    ctx.translate(W / 2 + sx, H / 2 + sy); ctx.scale(zoom, zoom * COS); ctx.translate(-Math.round(cam.x), -Math.round(cam.y));
+    if (!use3D) drawMap(view);
     drawGround(dt);
     drawLights(view);
     drawShockwaves(dt);
     drawRangeIndicator();
     const visible = world.units.filter((u) => u.x > view.x0 - 250 && u.x < view.x1 + 250 && u.y > view.y0 - 250 && u.y < view.y1 + 250);
     visible.sort((a, b) => a.y - b.y);
-    for (const u of visible) if (!u.alive && u.kind === 'tower') drawUnit(u, dt);
-    for (const u of visible) if (u.alive || u.kind !== 'tower') drawUnit(u, dt);
+    if (use3D) for (const u of visible) drawOverlay3D(u, dt);
+    else {
+        for (const u of visible) if (!u.alive && u.kind === 'tower') drawUnit(u, dt);
+        for (const u of visible) if (u.alive || u.kind !== 'tower') drawUnit(u, dt);
+    }
     drawGhosts(dt);
     drawTowerBeams();
-    drawProjectiles(dt);
-    drawParticles();
+    ctx.save(); ctx.translate(0, -lift(45)); drawProjectiles(dt); ctx.restore();
+    ctx.save(); ctx.translate(0, -lift(25)); drawParticles(); ctx.restore();
     drawEffects();
     drawCoinsAndPillars(dt);
-    drawClouds(view, dt);
+    if (!use3D) drawClouds(view, dt);
     drawMotes(view);
     ctx.restore();
+    if (use3D) drawLabels3D(dt);
     drawVignette();
     drawMinimap();
     if (paused) {
@@ -2060,7 +2422,7 @@ function updateCamera(dt) {
         if (mouse.sy < edge) cam.y -= speed;
         if (mouse.sy > H - edge) cam.y += speed;
     }
-    const hw = W / 2 / zoom, hh = H / 2 / zoom;
+    const hw = W / 2 / zoom, hh = H / 2 / zoom / COS;
     cam.x = clamp(cam.x, Math.min(hw, MAP / 2), Math.max(MAP - hw, MAP / 2));
     cam.y = clamp(cam.y, Math.min(hh, MAP / 2), Math.max(MAP - hh + 160 / zoom, MAP / 2));
 }
