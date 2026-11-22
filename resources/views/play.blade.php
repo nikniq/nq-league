@@ -88,5 +88,5 @@
         saveUrl: @json(route('matches.store')),
     };
 </script>
-<script src="{{ asset('js/game.js') }}"></script>
+<script src="{{ asset('js/game.js') }}?v={{ filemtime(public_path('js/game.js')) }}"></script>
 @endpush
