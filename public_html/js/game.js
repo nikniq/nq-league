@@ -2110,6 +2110,22 @@ function create3D() {
     renderer.shadowMap.type = T.PCFSoftShadowMap;
     const scene = new T.Scene();
     scene.background = new T.Color(0x0b1410);
+    // Depth haze: the far (upper) part of the screen fades slightly into the night air.
+    scene.fog = new T.Fog(0x0e1a16, 2700, 5600);
+    const windU = { value: 0 };
+    // Bends geometry above its base with a travelling wind wave (instanced meshes only).
+    const sway = (m, amp, base) => {
+        m.onBeforeCompile = (sh) => {
+            sh.uniforms.uWind = windU;
+            sh.vertexShader = 'uniform float uWind;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+                vec4 wp = instanceMatrix[3];
+                float hgt = max(0.0, position.y - (${base.toFixed(2)}));
+                float ph = uWind * 1.6 + wp.x * 0.004 + wp.z * 0.006;
+                transformed.x += (sin(ph) * 0.7 + sin(ph * 2.3) * 0.3) * hgt * ${amp.toFixed(3)};
+                transformed.z += cos(ph * 0.8) * hgt * ${(amp * 0.5).toFixed(3)};`);
+        };
+        return m;
+    };
     const camera = new T.OrthographicCamera(-1, 1, 1, -1, 1, 6000);
 
     scene.add(new T.HemisphereLight(0xcfe3ff, 0x34402a, 0.6));
@@ -2124,7 +2140,7 @@ function create3D() {
     const tex = new T.CanvasTexture(getMap(false));
     tex.encoding = T.sRGBEncoding;
     tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-    const ground = new T.Mesh(new T.PlaneGeometry(MAP, MAP), new T.MeshLambertMaterial({ map: tex }));
+    const ground = new T.Mesh(new T.PlaneGeometry(MAP, MAP, 64, 64), new T.MeshLambertMaterial({ map: tex }));
     ground.rotation.x = -Math.PI / 2; ground.position.set(MAP / 2, 0, MAP / 2); ground.receiveShadow = true;
     scene.add(ground);
     const outer = new T.Mesh(new T.PlaneGeometry(MAP * 3, MAP * 3), new T.MeshLambertMaterial({ color: 0x14261a }));
@@ -2141,7 +2157,7 @@ function create3D() {
     const trees = decor.trees;
     const trunk = new T.InstancedMesh(new T.CylinderGeometry(0.12, 0.18, 1, 6), new T.MeshLambertMaterial({ color: 0x5a3b22 }), trees.length);
     const canopyGeo = new T.IcosahedronGeometry(1, 1);
-    const canopy = new T.InstancedMesh(canopyGeo, new T.MeshLambertMaterial({ flatShading: true }), trees.length * 2);
+    const canopy = new T.InstancedMesh(canopyGeo, sway(new T.MeshLambertMaterial({ flatShading: true }), 0.08, -1), trees.length * 2);
     trees.forEach((t, i) => {
         const h = t.r * 1.4;
         m4.compose(v.set(t.x, h * 0.5, t.y), q.identity(), sc.set(t.r, h, t.r)); trunk.setMatrixAt(i, m4);
@@ -2160,6 +2176,33 @@ function create3D() {
     });
     rocks.castShadow = rocks.receiveShadow = true;
     scene.add(rocks);
+
+    // Grass tufts scattered over the jungle, swaying in the wind.
+    const tufts = [];
+    {
+        const rr = rng(4242), want = isTouch ? 1400 : 3600;
+        for (let i = 0; i < want * 4 && tufts.length < want; i++) {
+            const x = rr() * MAP, y = rr() * MAP;
+            if (nearLane(x, y, 130) || nearRiver(x, y, 170) || nearBase(x, y, 560)) continue;
+            if (trees.some((t) => Math.abs(t.x - x) < t.r && Math.abs(t.y - y) < t.r)) continue;
+            tufts.push({ x, y, s: 7 + rr() * 9, a: rr() * 6.28, h: rr() });
+        }
+    }
+    const grass = new T.InstancedMesh(new T.ConeGeometry(0.35, 1, 3).translate(0, 0.5, 0), sway(new T.MeshLambertMaterial({ flatShading: true }), 0.35, 0), tufts.length * 3);
+    tufts.forEach((g, i) => {
+        for (let k = 0; k < 3; k++) {
+            const ox = Math.cos(g.a + k * 2.1) * g.s * 0.35, oz = Math.sin(g.a + k * 2.1) * g.s * 0.35;
+            m4.compose(v.set(g.x + ox, 0, g.y + oz), q.setFromEuler(new T.Euler(Math.cos(k * 2.1) * 0.25, g.a + k, Math.sin(k * 2.1) * 0.25)), sc.set(g.s * 0.7, g.s * (1.2 + k * 0.35), g.s * 0.7));
+            grass.setMatrixAt(i * 3 + k, m4);
+            grass.setColorAt(i * 3 + k, col.setHSL((95 + g.h * 30) / 360, 0.5, 0.22 + k * 0.05 + g.h * 0.06));
+        }
+    });
+    grass.receiveShadow = true;
+    scene.add(grass);
+
+    // A fixed pool of point lights handed to the brightest things in view each frame
+    // (a constant light count avoids shader recompiles).
+    const lights = Array.from({ length: isTouch ? 4 : 8 }, () => { const l = new T.PointLight(0xffffff, 0, 420, 2); scene.add(l); return l; });
 
     // Shared materials and geometry for units.
     const mats = {};
@@ -2265,7 +2308,16 @@ function create3D() {
         return g;
     }
 
-    const meshes = new Map();
+    const meshes = new Map(), dying = new Set();
+    // Units topple over and sink into the ground instead of vanishing.
+    function dieAnim(g, d, dt) {
+        d.deadT = (d.deadT ?? 0) + dt;
+        const k = Math.min(1, d.deadT / 1.1);
+        d.rig.rotation.x = Math.min(1, k * 2.5) * 1.45 * (g.id % 2 ? 1 : -1);
+        g.position.y = -Math.max(0, k - 0.45) * 80;
+        g.visible = k < 1;
+        return k >= 1;
+    }
     function sync(u, dt) {
         let g = meshes.get(u);
         if (!g) {
@@ -2277,8 +2329,8 @@ function create3D() {
         g.visible = true;
         g.position.set(u.x, 0, u.y);
         if (u.kind === 'champ' || u.kind === 'minion') {
-            g.visible = u.alive;
-            if (!u.alive) return;
+            if (!u.alive) { dieAnim(g, d, dt); return; }
+            if (d.deadT !== undefined) { d.deadT = undefined; d.rig.rotation.x = 0; g.position.y = 0; }
             const moving = (u.spd || 0) > 5;
             const bob = moving ? Math.abs(Math.sin((u.walkT || 0) * (u.kind === 'champ' ? 12 : 14) + u.id)) * (u.kind === 'champ' ? 4 : 2.5) : 0;
             d.rig.position.y = bob;
@@ -2332,7 +2384,27 @@ function create3D() {
                 sync(u, dt); seen.add(u);
             }
             // Drop meshes of units that no longer exist (dead minions are removed from the world).
-            for (const [u, g] of meshes) if (!world.units.includes(u)) { scene.remove(g); meshes.delete(u); }
+            for (const [u, g] of meshes) if (!world.units.includes(u)) { meshes.delete(u); if (g.visible && g.userData.rig) dying.add(g); else scene.remove(g); }
+            for (const g of dying) if (dieAnim(g, g.userData, dt)) { scene.remove(g); dying.delete(g); }
+            windU.value = world.time;
+            // Assign the light pool: projectiles first, then tower and nexus crystals near the camera.
+            const cands = [];
+            for (const p of world.projectiles) {
+                if (p.x < view.x0 - 200 || p.x > view.x1 + 200 || p.y < view.y0 - 200 || p.y > view.y1 + 300) continue;
+                cands.push({ x: p.x, y: 50, z: p.y, c: p.color, i: p.big ? 3 : p.owner.kind === 'tower' ? 2.2 : 1.4, d: p.big ? 600 : 300, pr: 2 });
+            }
+            for (const u of world.units) {
+                if (!u.alive || (u.kind !== 'tower' && u.kind !== 'nexus')) continue;
+                if (u.x < view.x0 - 300 || u.x > view.x1 + 300 || u.y < view.y0 - 300 || u.y > view.y1 + 500) continue;
+                const nex = u.kind === 'nexus';
+                cands.push({ x: u.x, y: nex ? 140 : 128, z: u.y, c: TEAM_COLOR[u.team], i: (nex ? 2.4 : 1.6) * (0.85 + 0.15 * Math.sin(world.time * 3 + u.id)), d: nex ? 700 : 450, pr: 1 });
+            }
+            cands.sort((a, b) => b.pr - a.pr || Math.hypot(a.x - cam.x, a.z - cam.y) - Math.hypot(b.x - cam.x, b.z - cam.y));
+            lights.forEach((l, i) => {
+                const c = cands[i];
+                if (!c) { l.intensity = 0; return; }
+                l.position.set(c.x, c.y, c.z); l.color.set(c.c); l.intensity = c.i; l.distance = c.d;
+            });
             renderer.render(scene, camera);
         },
         show(on) { glCanvas.style.display = on ? 'block' : 'none'; },
