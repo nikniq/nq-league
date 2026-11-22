@@ -171,12 +171,16 @@ body.touch .shop-close { display: inline-block; }
 body.touch #touch-ui { display: block; }
 body.touch .stats, body.touch .abilities { display: none; }
 body.touch .bottom {
-    padding: 6px 10px; gap: 10px; border-radius: 10px 10px 0 0;
+    padding: 4px 8px; gap: 8px; border-radius: 10px 10px 0 0; align-items: center;
     padding-bottom: calc(6px + env(safe-area-inset-bottom));
 }
-body.touch .portrait { width: 44px; height: 44px; font-size: 20px; }
-body.touch .abil-wrap { width: min(200px, 30vw); }
-body.touch .side { min-width: 0; font-size: 12px; }
+body.touch .portrait { width: 32px; height: 32px; font-size: 15px; }
+body.touch .portrait span { transform: scale(.8); }
+body.touch .abil-wrap { width: min(170px, 24vw); }
+body.touch .bar { height: 9px; }
+body.touch .bar em { font-size: 8px; line-height: 9px; }
+body.touch .side { min-width: 0; font-size: 11px; display: flex; flex-wrap: wrap; gap: 2px 8px; max-width: 150px; }
+body.touch .side .items { display: none; }
 body.touch .items { grid-template-columns: repeat(6, 20px); }
 body.touch .items div { width: 20px; height: 20px; font-size: 10px; }
 body.touch #feed { top: 44px; font-size: 11px; }
@@ -193,9 +197,12 @@ body.touch .shop-item { padding: 10px; }
     min-width: 44px; height: 34px; padding: 0 10px; border-radius: 8px; font: 600 13px system-ui;
     color: var(--text); background: rgba(14, 20, 34, .85); border: 1px solid var(--gold);
 }
+#joy-zone {
+    position: absolute; left: 0; bottom: 0; width: 42vw; height: 72vh; pointer-events: auto; touch-action: none;
+}
 #joy {
     position: absolute; left: calc(28px + env(safe-area-inset-left)); bottom: calc(28px + env(safe-area-inset-bottom));
-    width: 130px; height: 130px; border-radius: 50%; pointer-events: auto; touch-action: none;
+    width: 130px; height: 130px; border-radius: 50%; pointer-events: none; touch-action: none; opacity: .55; transition: opacity .15s;
     background: radial-gradient(rgba(255,255,255,.04), rgba(255,255,255,.12)); border: 2px solid rgba(255,255,255,.25);
 }
 #joy-knob {
@@ -215,7 +222,7 @@ body.touch .shop-item { padding: 10px; }
 .tb.ready { border-color: var(--gold); }
 .tb.locked { opacity: .35; }
 .tb:active { transform: scale(.93); }
-.tb .lbl { position: absolute; bottom: 7px; font: 600 8px system-ui; color: #c3c9d8; }
+.tb .lbl { position: absolute; bottom: 6px; font: 700 9px system-ui; color: #c3c9d8; }
 .tb .cd { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.65); font-size: 18px; }
 .tb.big { width: 88px; height: 88px; right: 0; bottom: 0; font-size: 36px; border-color: var(--gold); background: radial-gradient(circle at 40% 35%, #7a5a2a, #2a1d0c); }
 .tb.q { right: 129px; bottom: 14px; }
@@ -340,3 +347,10 @@ a { color: var(--gold); }
 .oauth-btn { width: 100%; }
 .oauth .or { text-align: center; margin: 4px 0 0; }
 @media (max-width: 860px) { .feat-grid { grid-template-columns: 1fr 1fr; } } @media (max-width: 520px) { .feat-grid { grid-template-columns: 1fr; } }
+#joy.active { opacity: 1; transition: none; }
+body.touch #touch-ui { padding-left: env(safe-area-inset-left); }
+body.touch .top-bar { top: env(safe-area-inset-top); }
+@media (max-height: 360px) {
+    #tbtns { transform: scale(.88); transform-origin: right bottom; }
+    #joy { transform: scale(.88); }
+}

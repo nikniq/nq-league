@@ -843,7 +843,7 @@ function resize() {
     W = window.innerWidth; H = window.innerHeight;
     canvas.width = W * DPR; canvas.height = H * DPR;
     // Small screens see more of the map instead of a cramped close-up.
-    zoom = clamp(Math.min(W, H) / 820, 0.5, 1);
+    zoom = isTouch ? clamp(Math.min(W, H) / 620, 0.62, 1) : clamp(Math.min(W, H) / 820, 0.5, 1);
 }
 window.addEventListener('resize', resize);
 resize();
@@ -975,13 +975,23 @@ function useAbility(idx, point) {
 }
 
 if (isTouch) {
-    const joyEl = $('joy'), knob = $('joy-knob');
-    joyEl.addEventListener('pointerdown', (e) => {
-        const r = joyEl.getBoundingClientRect();
-        joy.id = e.pointerId; joy.cx = r.left + r.width / 2; joy.cy = r.top + r.height / 2;
-        joyEl.setPointerCapture(e.pointerId);
+    const joyEl = $('joy'), knob = $('joy-knob'), zone = $('joy-zone');
+    const buzz = (ms) => { try { navigator.vibrate && navigator.vibrate(ms); } catch (_) {} };
+    window.nqBuzz = buzz;
+    // Floating joystick: it appears wherever the thumb lands in the left zone.
+    zone.addEventListener('pointerdown', (e) => {
+        if (joy.id !== null) return;
+        e.preventDefault();
+        joy.id = e.pointerId; joy.cx = e.clientX; joy.cy = e.clientY;
+        joyEl.style.left = (e.clientX - 65) + 'px'; joyEl.style.top = (e.clientY - 65) + 'px';
+        joyEl.style.bottom = 'auto'; joyEl.classList.add('active');
+        zone.setPointerCapture(e.pointerId);
         joyMove(e);
     });
+    zone.addEventListener('pointermove', (e) => joyMove(e));
+    zone.addEventListener('pointerup', (e) => { joyEnd(e); joyEl.classList.remove('active'); joyEl.style.left = joyEl.style.top = joyEl.style.bottom = ''; });
+    zone.addEventListener('pointercancel', (e) => { joyEnd(e); joyEl.classList.remove('active'); joyEl.style.left = joyEl.style.top = joyEl.style.bottom = ''; });
+    window.addEventListener('contextmenu', (e) => e.preventDefault());
     const joyMove = (e) => {
         if (e.pointerId !== joy.id) return;
         let dx = e.clientX - joy.cx, dy = e.clientY - joy.cy;
@@ -995,9 +1005,6 @@ if (isTouch) {
         joy.id = null; joy.dx = joy.dy = 0; knob.style.transform = '';
         if (player.order && player.order.type === 'move' && player.order.joy) player.order = null;
     };
-    joyEl.addEventListener('pointermove', joyMove);
-    joyEl.addEventListener('pointerup', joyEnd);
-    joyEl.addEventListener('pointercancel', joyEnd);
 
     document.querySelectorAll('#tbtns [data-abil]').forEach((btn) => {
         const raw = btn.dataset.abil, idx = raw === 'flash' ? 'flash' : +raw;
@@ -1006,6 +1013,7 @@ if (isTouch) {
         btn.addEventListener('pointerdown', (e) => {
             e.preventDefault();
             btn.setPointerCapture(e.pointerId);
+            buzz(8);
             touchAim = { idx, id: e.pointerId, sx: e.clientX, sy: e.clientY, dx: 0, dy: 0, range: def.range || 0, self: !!def.self };
         });
         btn.addEventListener('pointermove', (e) => {
@@ -1025,7 +1033,7 @@ if (isTouch) {
     });
 
     const atk = $('t-attack');
-    atk.addEventListener('pointerdown', (e) => { e.preventDefault(); atk.setPointerCapture(e.pointerId); attackHeld = true; attackRetarget = 0; });
+    atk.addEventListener('pointerdown', (e) => { e.preventDefault(); atk.setPointerCapture(e.pointerId); buzz(8); attackHeld = true; attackRetarget = 0; });
     const atkEnd = () => { attackHeld = false; };
     atk.addEventListener('pointerup', atkEnd);
     atk.addEventListener('pointercancel', atkEnd);

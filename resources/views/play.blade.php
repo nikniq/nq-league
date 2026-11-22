@@ -52,6 +52,7 @@
             <button type="button" id="t-recall">Recall</button>
             <button type="button" id="t-pause">II</button>
         </div>
+        <div id="joy-zone"></div>
         <div id="joy"><div id="joy-knob"></div></div>
         <div id="tbtns">
             <button type="button" class="tb big" id="t-attack">⚔</button>
