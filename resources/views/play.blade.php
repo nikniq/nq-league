@@ -51,6 +51,7 @@
     <div id="touch-ui">
         <div class="tmenu">
             <button type="button" id="t-shop">Shop</button>
+            <button type="button" id="t-potion">🧪0</button>
             <button type="button" id="t-recall">Recall</button>
             <button type="button" id="t-pause">II</button>
         </div>

@@ -27,6 +27,7 @@ const ITEMS = [
     { id: 'belt', name: 'Giant\'s Belt', icon: '❤', cost: 900, stats: { maxHp: 350 } },
 ];
 const MAX_ITEMS = 6;
+const POTION = { cost: 50, max: 5, heal: 150, dur: 10 };
 
 // ---------- Champions ----------
 const lv = (u) => u.level;
@@ -195,7 +196,8 @@ function makeChamp(key, team, lane, isPlayer, name) {
     const c = CHAMPS[key];
     const u = makeUnit({
         kind: 'champ', key, team, lane, isPlayer, name, def: c, r: c.r, ranged: c.ranged,
-        level: 1, xp: 0, gold: 500, kills: 0, deaths: 0, cs: 0, items: [],
+        level: 1, xp: 0, gold: 500, kills: 0, deaths: 0, assists: 0, cs: 0, items: [],
+        streak: 0, multi: 0, multiT: -99, potions: 0, potionT: 0,
         cds: [0, 0, 0, 0], flashCd: 0, respawn: 0, recall: 0, mana: c.mana, maxMana: c.mana,
         spin: 0, spinTick: 0, rapid: 0, dash: null,
     });
@@ -227,7 +229,8 @@ function respawnAt(u) {
     u.x = b.x + off * (40 + Math.random() * 60);
     u.y = b.y - off * (40 + Math.random() * 60);
     u.alive = true; u.hp = u.maxHp; u.mana = u.maxMana;
-    u.order = null; u.stun = 0; u.slow = 0; u.dash = null; u.recall = 0;
+    u.order = null; u.stun = 0; u.slow = 0; u.dash = null; u.recall = 0; u.potionT = 0;
+    u.dmgBy = new Map();
 }
 
 function spawnStructures() {
@@ -294,7 +297,7 @@ function damage(src, tgt, amount, type) {
     if (dmg >= 1) fxEvent('hit', tgt, type);
     if (tgt.kind === 'champ') {
         tgt.recall = 0;
-        if (src.kind === 'champ') tgt.lastChampHit = { by: src, t: world.time };
+        if (src.kind === 'champ') { tgt.lastChampHit = { by: src, t: world.time }; tgt.dmgBy && tgt.dmgBy.set(src, world.time); }
     }
     if (src.kind === 'champ' && tgt.kind === 'champ') src.aggroT = world.time;
     if (dmg >= 1 && (tgt.isPlayer || src.isPlayer)) fx('num', tgt.x, tgt.y - tgt.r, Math.round(dmg), 0.7, type === 'true' ? '#fff' : type === 'magic' ? '#c99bff' : '#ffb35a');
@@ -314,14 +317,31 @@ function kill(src, tgt) {
         tgt.deaths++;
         tgt.respawn = 6 + tgt.level * 2;
         world.kills[enemy(tgt.team)]++;
+        const bounty = 300 + Math.min(500, Math.max(0, tgt.streak - 1) * 100);
+        const shutdown = tgt.streak >= 3;
+        tgt.streak = 0;
+        let callout = null;
         if (killer) {
             killer.kills++;
-            killer.gold += 300;
+            killer.streak++;
+            killer.multi = world.time - killer.multiT < 10 ? killer.multi + 1 : 1;
+            killer.multiT = world.time;
+            const firstBlood = !world.firstBlood;
+            world.firstBlood = true;
+            killer.gold += bounty + (firstBlood ? 100 : 0);
             giveXp(killer, 120 + tgt.level * 30);
-            feed(`${killer.name} slain ${tgt.name}`, killer.team);
+            const helpers = [...(tgt.dmgBy || new Map())].filter(([c, t]) => c !== killer && c.team === killer.team && world.time - t < 10).map(([c]) => c);
+            for (const h of helpers) { h.assists++; h.gold += Math.round(bounty * 0.5 / helpers.length); giveXp(h, (120 + tgt.level * 30) * 0.5); }
+            feed(`${killer.name} slain ${tgt.name}${shutdown ? ' (shut down)' : ''}`, killer.team);
+            callout = firstBlood ? 'First Blood!' : ({ 2: 'Double Kill!', 3: 'Triple Kill!', 4: 'Quadra Kill!' })[Math.min(4, killer.multi)]
+                || (shutdown ? 'Shut Down!' : ({ 3: 'Killing Spree!', 5: 'Rampage!', 7: 'Unstoppable!', 9: 'Godlike!' })[killer.streak]);
+            // Bots only announce first blood and sprees; the player hears every callout.
+            if (!killer.isPlayer && callout && callout !== 'First Blood!') callout = killer.streak >= 3 || shutdown ? `${killer.name}: ${callout}` : null;
         } else feed(`${tgt.name} was executed`, enemy(tgt.team));
-        if (tgt.isPlayer) banner('You have been slain');
+        if (tgt.isPlayer) banner(callout ? `${callout} · You have been slain` : 'You have been slain');
+        else if (callout) banner(callout);
         else if (killer && killer.isPlayer) banner('Enemy slain');
+        else if (tgt.dmgBy && tgt.dmgBy.has(player) && world.time - tgt.dmgBy.get(player) < 10) banner('Assist');
     } else if (tgt.kind === 'tower') {
         for (const c of champsOf(enemy(tgt.team))) c.gold += 150;
         feed(`${tgt.team === BLUE ? 'Blue' : 'Red'} ${tgt.lane} tower destroyed`, enemy(tgt.team));
@@ -492,6 +512,7 @@ function updateChampState(u, dt) {
     u.hp = Math.min(u.maxHp, u.hp + (u.def.regen + u.level * 0.5) * dt);
     u.mana = Math.min(u.maxMana, u.mana + (u.def.manaRegen || 0) * dt);
     u.gold += 2 * dt;
+    if (u.potionT > 0) { u.potionT -= dt; u.hp = Math.min(u.maxHp, u.hp + POTION.heal / POTION.dur * dt); }
 
     if (inFountain(u, u.team)) {
         u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.12 * dt);
@@ -661,6 +682,7 @@ function botAI(u, dt) {
         u.retreating = false;
     }
     if (u.recall > 0) return;
+    if (u.hp < u.maxHp * 0.5 && !inFountain(u, u.team)) drinkPotion(u);
 
     if (u.hp < u.maxHp * 0.28) u.retreating = true;
     if (u.retreating) {
@@ -740,8 +762,21 @@ function botShop(u) {
         if (item.unique && u.items.some((i) => i.id === id)) continue;
         if (u.items.filter((i) => i.id === id).length >= prefs.filter((p) => p === id).length) continue;
         if (u.gold >= item.cost) { u.gold -= item.cost; u.items.push(item); recalcStats(u, false); }
-        else return;
+        else break;
     }
+    while (u.potions < 2 && buyPotion(u));
+}
+
+function drinkPotion(u) {
+    if (!u.alive || u.potions <= 0 || u.potionT > 0 || u.hp >= u.maxHp) return false;
+    u.potions--; u.potionT = POTION.dur;
+    fx('ring', u.x, u.y, 40, 0.4, '#ff6b8a');
+    return true;
+}
+function buyPotion(u) {
+    if ((u.alive && !inFountain(u, u.team)) || u.gold < POTION.cost || u.potions >= POTION.max) return false;
+    u.gold -= POTION.cost; u.potions++;
+    return true;
 }
 
 function buy(u, item) {
@@ -785,7 +820,7 @@ let onGameOver = null;
 let feed = () => {}, banner = () => {}, fxEvent = () => {};
 
 if (typeof window === 'undefined' || !document.getElementById('game')) {
-    if (typeof module !== 'undefined') module.exports = { setupGame, update, getWorld: () => world, getPlayer: () => player, cast, buy, ITEMS, CHAMPS, isInvulnerable, flash };
+    if (typeof module !== 'undefined') module.exports = { setupGame, update, getWorld: () => world, getPlayer: () => player, cast, buy, buyPotion, drinkPotion, ITEMS, CHAMPS, isInvulnerable, flash };
     return;
 }
 
@@ -914,6 +949,7 @@ window.addEventListener('keydown', (e) => {
     else if (k === 'd' || k === 'f') flash(player, w.x, w.y);
     else if (k === 'b') { if (player.alive && !inFountain(player, player.team)) { player.recall = 8; player.order = null; } }
     else if (k === 'p') toggleShop();
+    else if (k === '1') drinkPotion(player);
     else if (k === 'g') setView(use3D ? '2d' : '3d');
     else if (k === 'y') { cam.locked = !cam.locked; banner(cam.locked ? 'Camera locked' : 'Camera unlocked'); }
     else if (k === 's') { player.order = null; player.recall = 0; }
@@ -941,8 +977,14 @@ const shopButtons = ITEMS.map((it) => {
     $('shop-items').appendChild(b);
     return { b, it };
 });
+const potionBtn = document.createElement('button');
+potionBtn.className = 'shop-item';
+potionBtn.innerHTML = `<b>🧪 Health Potion</b>Heals ${POTION.heal} HP over ${POTION.dur}s (key 1) · <span>${POTION.cost}g</span>`;
+potionBtn.addEventListener('click', () => { buyPotion(player); renderShop(); });
+$('shop-items').prepend(potionBtn);
 function renderShop() {
     const canShop = inFountain(player, player.team) || !player.alive;
+    potionBtn.disabled = !canShop || player.gold < POTION.cost || player.potions >= POTION.max;
     for (const { b, it } of shopButtons) {
         const owned = it.unique && player.items.some((i) => i.id === it.id);
         b.disabled = !canShop || player.gold < it.cost || player.items.length >= MAX_ITEMS || owned;
@@ -963,6 +1005,12 @@ const flashEl = document.createElement('div');
 flashEl.className = 'abil';
 flashEl.innerHTML = '<small>D</small>✦<span class="name">Flash</span><div class="cd hidden"></div>';
 $('abilities').appendChild(flashEl);
+const potionEl = document.createElement('div');
+potionEl.className = 'abil potion';
+potionEl.innerHTML = '<small>1</small>🧪<span class="name">Potion</span><div class="cd hidden"></div><b class="count">0</b>';
+potionEl.addEventListener('click', () => drinkPotion(player));
+$('abilities').appendChild(potionEl);
+$('t-potion') && $('t-potion').addEventListener('click', () => drinkPotion(player));
 $('portrait').style.background = player.def.color;
 $('portrait').insertAdjacentText('afterbegin', player.def.letter);
 
@@ -1109,10 +1157,16 @@ function updateHud() {
     $('st-ar').textContent = Math.round(p.armor);
     $('st-as').textContent = currentAs(p).toFixed(2);
     $('st-ms').textContent = Math.round(currentSpeed(p));
-    $('kda').textContent = `${p.kills}/${p.deaths}`;
+    $('kda').textContent = `${p.kills}/${p.deaths}/${p.assists}`;
+    potionEl.querySelector('.count').textContent = p.potions;
+    potionEl.classList.toggle('ready', p.potions > 0 && p.potionT <= 0);
+    potionEl.querySelector('.cd').classList.toggle('hidden', p.potionT <= 0);
+    potionEl.querySelector('.cd').textContent = p.potionT > 0 ? Math.ceil(p.potionT) : '';
+    if ($('t-potion')) $('t-potion').textContent = `🧪${p.potions}`;
     $('cs').textContent = p.cs;
     $('gold').textContent = Math.floor(p.gold);
     if ($('d-shop')) $('d-shop').classList.toggle('can-buy', p.alive && inFountain(p, p.team) && Object.values(ITEMS).some((it) => it.cost <= p.gold) && $('shop').classList.contains('hidden'));
+    if (!$('shop').classList.contains('hidden')) renderShop();
     $('items').innerHTML = Array.from({ length: MAX_ITEMS }, (_, i) => `<div title="${p.items[i] ? p.items[i].name : ''}">${p.items[i] ? p.items[i].icon : ''}</div>`).join('');
     p.def.abilities.forEach((a, i) => {
         const el = abilEls[i], cd = el.querySelector('.cd');
