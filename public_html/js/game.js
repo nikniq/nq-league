@@ -1303,16 +1303,29 @@ function drawParticles() {
     }
     ctx.globalCompositeOperation = 'source-over';
 }
+let shakeT = 0, shakeMag = 0;
+const shockwaves = [];
+function shake(mag, dur) { if (mag >= shakeMag || shakeT <= 0) { shakeMag = mag; shakeT = dur; } }
+const motes = [];
+for (let i = 0; i < 70; i++) motes.push({ x: Math.random(), y: Math.random(), ph: Math.random() * TAU, s: 0.5 + Math.random() });
 fxEvent = (type, u, extra) => {
     if (type === 'hit') {
+        u.flashT = 0.12;
+        if (u.isPlayer) shake(4, 0.15);
         const col = extra === 'magic' ? 'rgba(200,150,255,0.9)' : extra === 'true' ? 'rgba(255,255,255,0.9)' : 'rgba(255,190,90,0.9)';
         emit(u.x, u.y - u.r * 0.3, u.kind === 'champ' ? 6 : 3, col, 220, 0.35, 2.5);
     } else if (type === 'death') {
         const n = u.kind === 'tower' ? 60 : u.kind === 'nexus' ? 140 : u.kind === 'champ' ? 36 : 12;
         emit(u.x, u.y, n, TEAM_COLOR[u.team], u.kind === 'minion' ? 160 : 380, u.kind === 'minion' ? 0.5 : 1.1, u.kind === 'minion' ? 3 : 5);
         emit(u.x, u.y, n / 2, 'rgba(160,160,170,0.5)', 120, 1.2, 6, -40);
+        if (u.kind !== 'minion') {
+            shockwaves.push({ x: u.x, y: u.y, t: 0, dur: u.kind === 'nexus' ? 1.4 : 0.8, r: u.kind === 'nexus' ? 600 : u.kind === 'tower' ? 320 : 140, color: TEAM_COLOR[u.team] });
+            const near = Math.hypot(u.x - cam.x, u.y - cam.y) < 900;
+            if (near) shake(u.kind === 'nexus' ? 18 : u.kind === 'tower' ? 12 : u.isPlayer ? 8 : 5, u.kind === 'champ' ? 0.3 : 0.6);
+        }
     } else if (type === 'levelup') {
         emit(u.x, u.y, 30, 'rgba(255,215,90,0.9)', 160, 1, 3, -120);
+        shockwaves.push({ x: u.x, y: u.y, t: 0, dur: 0.7, r: 110, color: '#ffd75a' });
     }
 };
 
@@ -1594,11 +1607,55 @@ function drawNexus(u, dt) {
 }
 
 function drawUnit(u, dt) {
-    if (u.kind === 'tower') return drawTower(u, dt);
-    if (u.kind === 'nexus') return drawNexus(u, dt);
-    if (!u.alive) return;
-    if (u.kind === 'minion') return drawMinion(u, dt);
-    drawChampion(u, dt);
+    if (u.kind === 'tower') drawTower(u, dt);
+    else if (u.kind === 'nexus') drawNexus(u, dt);
+    else if (!u.alive) return;
+    else if (u.kind === 'minion') drawMinion(u, dt);
+    else drawChampion(u, dt);
+    if (u.flashT > 0 && u.alive) {
+        u.flashT -= dt;
+        ctx.globalCompositeOperation = 'lighter';
+        glow(u.x, u.y - u.r * 0.2, u.r * 2.2, 'rgba(255,255,255,0.8)', Math.max(0, u.flashT / 0.12) * 0.7);
+        ctx.globalCompositeOperation = 'source-over';
+    }
+}
+
+function drawLights(view) {
+    ctx.globalCompositeOperation = 'lighter';
+    for (const u of world.units) {
+        if (!u.alive || (u.kind !== 'tower' && u.kind !== 'nexus')) continue;
+        if (u.x < view.x0 - 400 || u.x > view.x1 + 400 || u.y < view.y0 - 400 || u.y > view.y1 + 400) continue;
+        const flick = 0.85 + 0.15 * Math.sin(world.time * 3 + u.id);
+        glow(u.x, u.y, u.kind === 'nexus' ? 420 : 260, TEAM_COLOR[u.team], 0.08 * flick);
+    }
+    for (const t of [BLUE, RED]) glow(BASE[t].x, BASE[t].y, 520, TEAM_COLOR[t], 0.05);
+    ctx.globalCompositeOperation = 'source-over';
+}
+
+function drawShockwaves(dt) {
+    for (let i = shockwaves.length - 1; i >= 0; i--) {
+        const w = shockwaves[i];
+        w.t += dt;
+        if (w.t >= w.dur) { shockwaves.splice(i, 1); continue; }
+        const k = w.t / w.dur, e = 1 - Math.pow(1 - k, 3);
+        ctx.globalAlpha = 1 - k;
+        ellipse(w.x, w.y, w.r * e, w.r * e * 0.55, null, w.color, 6 * (1 - k) + 1);
+        ellipse(w.x, w.y, w.r * e * 0.8, w.r * e * 0.44, null, 'rgba(255,255,255,0.6)', 2);
+        ctx.globalAlpha = 1;
+    }
+}
+
+function drawMotes(view) {
+    const w = view.x1 - view.x0, h = view.y1 - view.y0;
+    ctx.globalCompositeOperation = 'lighter';
+    for (const m of motes) {
+        m.y -= 0.004 * m.s * 0.016; m.x += Math.sin(world.time * 0.6 + m.ph) * 0.0004;
+        if (m.y < 0) m.y += 1;
+        const x = view.x0 + ((m.x % 1) + 1) % 1 * w, y = view.y0 + m.y * h;
+        const a = 0.35 + 0.35 * Math.sin(world.time * 2 * m.s + m.ph);
+        glow(x, y, 6 * m.s, 'rgba(255,240,170,0.9)', a * 0.6);
+    }
+    ctx.globalCompositeOperation = 'source-over';
 }
 
 function drawProjectiles(dt) {
@@ -1766,10 +1823,14 @@ function render(dt) {
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.save();
-    ctx.translate(W / 2, H / 2); ctx.scale(zoom, zoom); ctx.translate(-Math.round(cam.x), -Math.round(cam.y));
+    let sx = 0, sy = 0;
+    if (shakeT > 0) { shakeT -= dt; const m = shakeMag * Math.max(0, shakeT) / 0.3; sx = (Math.random() - 0.5) * 2 * Math.min(m, shakeMag); sy = (Math.random() - 0.5) * 2 * Math.min(m, shakeMag); if (shakeT <= 0) shakeMag = 0; }
+    ctx.translate(W / 2 + sx, H / 2 + sy); ctx.scale(zoom, zoom); ctx.translate(-Math.round(cam.x), -Math.round(cam.y));
     const hw = W / 2 / zoom, hh = H / 2 / zoom;
     const view = { x0: cam.x - hw, x1: cam.x + hw, y0: cam.y - hh, y1: cam.y + hh };
     drawMap(view);
+    drawLights(view);
+    drawShockwaves(dt);
     drawRangeIndicator();
     const visible = world.units.filter((u) => u.x > view.x0 - 250 && u.x < view.x1 + 250 && u.y > view.y0 - 250 && u.y < view.y1 + 250);
     visible.sort((a, b) => a.y - b.y);
@@ -1778,6 +1839,7 @@ function render(dt) {
     drawProjectiles(dt);
     drawParticles();
     drawEffects();
+    drawMotes(view);
     ctx.restore();
     drawVignette();
     drawMinimap();
