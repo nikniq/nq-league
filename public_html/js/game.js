@@ -6,7 +6,21 @@ const MAP = 4000;
 const BLUE = 'blue', RED = 'red';
 const BASE = { blue: { x: 380, y: 3620 }, red: { x: 3620, y: 380 } };
 const FOUNTAIN_R = 420;
-const TEAM_COLOR = { blue: '#4f8cff', red: '#ff5a5a' };
+const TEAM_COLOR = { blue: '#4f8cff', red: '#ff5a5a', neutral: '#f0a040' };
+const NEUTRAL = 'neutral';
+/** River objectives. Drake buffs the whole team's damage; Golem empowers its killer. */
+const MONSTERS = {
+    drake: { name: 'Drake', x: 2780, y: 2780, hp: 3200, ad: 70, armor: 30, range: 320, ranged: true, r: 48, as: 0.55, first: 120, respawn: 150, gold: 150, xp: 300, color: '#ff8a3a' },
+    golem: { name: 'Golem', x: 1220, y: 1220, hp: 2600, ad: 60, armor: 40, range: 150, ranged: false, r: 44, as: 0.7, first: 90, respawn: 120, gold: 120, xp: 250, color: '#8fd0ff' },
+};
+const DRAKE_BUFF = { dur: 120, dmg: 0.12 };
+const GOLEM_BUFF = { dur: 90, speed: 0.15, regen: 0.012 };
+/** Team-wide troop (minion) upgrades bought from the shop. Each has three tiers. */
+const TROOP_UPGRADES = [
+    { id: 'dmg', name: 'Sharpened Blades', icon: '🗡', desc: '+20% minion damage', costs: [500, 800, 1100] },
+    { id: 'hp', name: 'Reinforced Armor', icon: '🛡', desc: '+20% minion health', costs: [500, 800, 1100] },
+    { id: 'siege', name: 'Siege Workshop', icon: '💣', desc: 'Cannon minion every 2 / every wave, +1 extra', costs: [700, 1000, 1400] },
+];
 const LANES = {
     top: [BASE.blue, { x: 450, y: 3000 }, { x: 450, y: 450 }, { x: 3000, y: 450 }, BASE.red],
     mid: [BASE.blue, BASE.red],
@@ -181,7 +195,7 @@ let world;
 let nextId = 1;
 
 function newWorld() {
-    return { pings: [], time: 0, units: [], projectiles: [], effects: [], timers: [], nextWave: 5, wave: 0, kills: { blue: 0, red: 0 }, over: false };
+    return { pings: [], buffs: { blue: 0, red: 0 }, upgrades: { blue: { dmg: 0, hp: 0, siege: 0 }, red: { dmg: 0, hp: 0, siege: 0 } }, time: 0, units: [], projectiles: [], effects: [], timers: [], nextWave: 5, wave: 0, kills: { blue: 0, red: 0 }, over: false };
 }
 
 function makeUnit(o) {
@@ -247,6 +261,47 @@ function spawnStructures() {
     }
 }
 
+function spawnMonsters() {
+    for (const [key, m] of Object.entries(MONSTERS)) {
+        world.units.push(makeUnit({ kind: 'monster', mkey: key, name: m.name, team: NEUTRAL, x: m.x, y: m.y, home: { x: m.x, y: m.y },
+            r: m.r, hp: m.hp, maxHp: m.hp, ad: m.ad, armor: m.armor, range: m.range, ranged: m.ranged, as: m.as, speed: 300,
+            alive: false, respawnAt: m.first, gold: m.gold, xp: m.xp, facing: Math.PI * 0.75 }));
+    }
+}
+
+function updateMonster(u) {
+    if (!u.alive) {
+        if (world.time >= u.respawnAt) {
+            const m = MONSTERS[u.mkey], scale = 1 + world.time / 600;
+            Object.assign(u, { alive: true, hp: m.hp * scale, maxHp: m.hp * scale, ad: m.ad * scale, x: u.home.x, y: u.home.y, order: null, lastHitBy: null });
+            feed(`${u.name} has spawned in the river`, NEUTRAL);
+            if (u.mkey === 'drake') banner('The Drake has spawned');
+        }
+        return;
+    }
+    const leash = Math.hypot(u.x - u.home.x, u.y - u.home.y) > 650;
+    const hitter = u.lastHitBy && u.lastHitBy.alive && u.lastHitBy.kind === 'champ' && world.time - (u.hitT || 0) < 6 ? u.lastHitBy : null;
+    if (leash || !hitter) {
+        // Reset: walk home and regenerate quickly.
+        u.order = Math.hypot(u.x - u.home.x, u.y - u.home.y) > 10 ? { type: 'move', x: u.home.x, y: u.home.y } : null;
+        if (leash) u.lastHitBy = null;
+        u.hp = Math.min(u.maxHp, u.hp + u.maxHp * 0.005);
+        return;
+    }
+    if (!u.order || u.order.target !== hitter) u.order = { type: 'attack', target: hitter };
+}
+
+/** Buy the next tier of a team troop upgrade. */
+function buyUpgrade(u, id) {
+    const up = TROOP_UPGRADES.find((x) => x.id === id), tiers = world.upgrades[u.team];
+    if (!up || tiers[id] >= up.costs.length || (u.alive && !inFountain(u, u.team))) return false;
+    const cost = up.costs[tiers[id]];
+    if (u.gold < cost) return false;
+    u.gold -= cost; tiers[id]++;
+    feed(`${u.name} upgraded ${up.name} to tier ${tiers[id]}`, u.team);
+    return true;
+}
+
 function isInvulnerable(u) {
     if (u.kind === 'tower' && u.protector) return u.protector.alive;
     if (u.kind === 'nexus') {
@@ -261,8 +316,11 @@ function spawnWave() {
     for (const team of [BLUE, RED]) {
         for (const [lane, path] of Object.entries(LANES)) {
             const p = team === BLUE ? path : [...path].reverse();
+            const up = world.upgrades[team];
             const types = ['melee', 'melee', 'melee', 'caster', 'caster', 'caster'];
-            if (world.wave % 3 === 0) types.splice(3, 0, 'cannon');
+            const cannonEvery = [3, 2, 1, 1][up.siege];
+            if (world.wave % cannonEvery === 0) types.splice(3, 0, 'cannon');
+            if (up.siege >= 3) types.splice(3, 0, 'cannon');
             types.forEach((type, i) => {
                 const start = pointAt(p, 0.06);
                 const spec = {
@@ -274,7 +332,8 @@ function spawnWave() {
                     kind: 'minion', mtype: type, team, lane, path: p, wp: 1,
                     x: start.x - (p[1].x - p[0].x) / pathLength(p) * i * 45 + (Math.random() - 0.5) * 10,
                     y: start.y - (p[1].y - p[0].y) / pathLength(p) * i * 45 + (Math.random() - 0.5) * 10,
-                    r: spec.r, hp: spec.hp * scale, maxHp: spec.hp * scale, ad: spec.ad * scale, armor: spec.armor,
+                    r: spec.r, hp: spec.hp * scale * (1 + 0.2 * up.hp), maxHp: spec.hp * scale * (1 + 0.2 * up.hp), ad: spec.ad * scale * (1 + 0.2 * up.dmg), armor: spec.armor,
+                    tier: up.dmg + up.hp,
                     range: spec.range, ranged: !!spec.ranged, as: 0.8, speed: 325, gold: spec.gold, xp: spec.xp,
                 }));
             });
@@ -286,6 +345,8 @@ function spawnWave() {
 function damage(src, tgt, amount, type) {
     if (!tgt.alive || isInvulnerable(tgt) || world.over) return;
     let dmg = amount;
+    if (src.kind === 'champ' && world.buffs[src.team] > world.time) dmg *= 1 + DRAKE_BUFF.dmg;
+    if (tgt.kind === 'monster') tgt.hitT = world.time;
     if (type === 'phys') dmg *= 100 / (100 + Math.max(0, tgt.armor));
     if (type === 'magic') dmg *= 100 / (100 + Math.max(0, tgt.mr ?? tgt.armor * 0.6));
     if (tgt.shield > 0) {
@@ -346,6 +407,17 @@ function kill(src, tgt) {
         for (const c of champsOf(enemy(tgt.team))) c.gold += 150;
         feed(`${tgt.team === BLUE ? 'Blue' : 'Red'} ${tgt.lane} tower destroyed`, enemy(tgt.team));
         if (playerTeamIs(enemy(tgt.team))) banner('Enemy turret destroyed'); else banner('Your turret has been destroyed');
+    } else if (tgt.kind === 'monster') {
+        tgt.respawnAt = world.time + MONSTERS[tgt.mkey].respawn;
+        const team = killer ? killer.team : src.team;
+        if (killer) { killer.gold += tgt.gold; giveXp(killer, tgt.xp); }
+        for (const c of champsOf(team)) if (c !== killer) { c.gold += 50; if (c.alive && dist(c, tgt) < 1400) giveXp(c, tgt.xp * 0.5); }
+        if (tgt.mkey === 'drake') world.buffs[team] = world.time + DRAKE_BUFF.dur;
+        else if (killer) killer.golemT = world.time + GOLEM_BUFF.dur;
+        const ours = playerTeamIs(team);
+        feed(`${team === BLUE ? 'Blue' : 'Red'} team slew the ${tgt.name}`, team);
+        banner(tgt.mkey === 'drake' ? (ours ? 'Drake slain! +12% damage for your team' : 'Enemy team took the Drake')
+            : (killer && killer.isPlayer ? 'Golem slain! You are empowered' : ours ? 'Your team took the Golem' : 'Enemy team took the Golem'));
     } else if (tgt.kind === 'nexus') {
         endGame(tgt.team !== player.team);
     }
@@ -389,7 +461,7 @@ function towerDamage(tower, t) {
 }
 
 const currentAs = (u) => (u.kind === 'champ' ? Math.min(2.5, u.baseAs * (u.rapid > 0 ? 1.6 : 1)) : u.as);
-const currentSpeed = (u) => (u.kind === 'champ' ? u.baseSpeed : u.speed) * (u.slow > 0 ? 1 - u.slowPct : 1);
+const currentSpeed = (u) => (u.kind === 'champ' ? u.baseSpeed * (u.golemT > world.time ? 1 + GOLEM_BUFF.speed : 1) : u.speed) * (u.slow > 0 ? 1 - u.slowPct : 1);
 
 function skillshot(u, tx, ty, opt) {
     const ang = Math.atan2(ty - u.y, tx - u.x);
@@ -478,11 +550,13 @@ function update(dt) {
 
     for (const u of world.units) {
         if (u.kind === 'champ') updateChampState(u, dt);
+        if (u.kind === 'monster' && !u.alive) updateMonster(u);
         if (!u.alive) continue;
         u.atkCd = Math.max(0, u.atkCd - dt);
         u.stun = Math.max(0, u.stun - dt);
         u.slow = Math.max(0, u.slow - dt);
         if (u.kind === 'minion') minionAI(u);
+        else if (u.kind === 'monster') updateMonster(u);
         else if (u.kind === 'tower') towerAI(u);
         else if (u.kind === 'champ' && (!u.isPlayer || world.autoplay)) botAI(u, dt);
         else if (u.isPlayer) autoAcquire(u, dt);
@@ -513,6 +587,7 @@ function updateChampState(u, dt) {
     u.hp = Math.min(u.maxHp, u.hp + (u.def.regen + u.level * 0.5) * dt);
     u.mana = Math.min(u.maxMana, u.mana + (u.def.manaRegen || 0) * dt);
     u.gold += 2 * dt;
+    if (u.golemT > world.time) u.hp = Math.min(u.maxHp, u.hp + u.maxHp * GOLEM_BUFF.regen * dt);
     if (u.potionT > 0) { u.potionT -= dt; u.hp = Math.min(u.maxHp, u.hp + POTION.heal / POTION.dur * dt); }
 
     if (inFountain(u, u.team)) {
@@ -591,7 +666,7 @@ function nearestEnemy(u, range, filter) {
 function minionAI(u) {
     const cur = u.order && u.order.type === 'attack' ? u.order.target : null;
     if (cur && validTarget(u, cur) && dist(u, cur) < 700) return;
-    const t = nearestEnemy(u, 400, (e) => !isInvulnerable(e));
+    const t = nearestEnemy(u, 400, (e) => !isInvulnerable(e) && e.kind !== 'monster');
     if (t) { u.order = { type: 'attack', target: t }; return; }
     while (u.wp < u.path.length - 1 && dist(u, u.path[u.wp]) < 60) u.wp++;
     const wp = u.path[u.wp];
@@ -608,7 +683,7 @@ function towerAI(u) {
     if (cur && validTarget(u, cur) && reach(cur)) return;
     let best = null, bd = Infinity;
     for (const e of world.units) {
-        if (!e.alive || e.team === u.team || !reach(e) || e.kind === 'tower' || e.kind === 'nexus') continue;
+        if (!e.alive || e.team === u.team || !reach(e) || e.kind === 'tower' || e.kind === 'nexus' || e.kind === 'monster') continue;
         if (e.kind === 'champ' && inFountain(e, e.team)) continue;
         const score = dist(u, e) + (e.kind === 'champ' ? 2000 : 0);
         if (score < bd) { bd = score; best = e; }
@@ -722,7 +797,7 @@ function autoAcquire(u, dt) {
     const reach = (e) => dist(u, e) <= u.range + e.r + u.r * 0.5;
     let champ = null, minion = null, structure = null;
     for (const e of world.units) {
-        if (!validTarget(u, e) || isInvulnerable(e) || !reach(e)) continue;
+        if (!validTarget(u, e) || isInvulnerable(e) || !reach(e) || e.kind === 'monster') continue;
         if (e.kind === 'champ') { if (!champ || e.hp < champ.hp) champ = e; }
         else if (e.kind === 'minion') { if (!minion || e.hp < minion.hp) minion = e; }
         else if (!structure) structure = e;
@@ -785,6 +860,14 @@ function botAI(u, dt) {
         }
     }
 
+    // Objectives: healthy bots that are close enough go take a river monster when no enemy champion is near.
+    const mon = world.units.find((m) => m.kind === 'monster' && m.alive && dist(u, m) < (u.objective === m ? 2600 : 1500));
+    if (mon && u.level >= 4 && u.hp > u.maxHp * (u.objective === mon ? 0.35 : 0.7) && !nearestEnemy(u, 900, (e) => e.kind === 'champ')) {
+        u.objective = mon;
+        u.order = { type: 'attack', target: mon }; return;
+    }
+    u.objective = null;
+
     // Answer a help ping: head to the spot (fighting anything met on the way above).
     if (u.assistGoal) {
         if (world.time > u.assistGoal.until || Math.hypot(u.x - u.assistGoal.x, u.y - u.assistGoal.y) < 250) u.assistGoal = null;
@@ -836,6 +919,11 @@ function botShop(u) {
         else break;
     }
     while (u.potions < 2 && buyPotion(u));
+    if (u.items.length >= 4 || u.gold > 1500) {
+        const t = world.upgrades[u.team];
+        const next = TROOP_UPGRADES.filter((x) => t[x.id] < x.costs.length).sort((a, b) => t[a.id] - t[b.id])[0];
+        if (next && u.gold >= next.costs[t[next.id]] + 300) buyUpgrade(u, next.id);
+    }
 }
 
 function drinkPotion(u) {
@@ -864,6 +952,7 @@ function setupGame(cfg) {
     world = newWorld();
     nextId = 1;
     spawnStructures();
+    spawnMonsters();
     const keys = Object.keys(CHAMPS);
     const pick = () => keys[Math.floor(Math.random() * keys.length)];
     player = makeChamp(cfg.champion, BLUE, 'mid', true, cfg.name);
@@ -891,7 +980,7 @@ let onGameOver = null;
 let feed = () => {}, banner = () => {}, fxEvent = () => {};
 
 if (typeof window === 'undefined' || !document.getElementById('game')) {
-    if (typeof module !== 'undefined') module.exports = { setupGame, update, getWorld: () => world, getPlayer: () => player, cast, buy, buyPotion, ping, drinkPotion, ITEMS, CHAMPS, isInvulnerable, flash };
+    if (typeof module !== 'undefined') module.exports = { setupGame, update, getWorld: () => world, getPlayer: () => player, cast, buy, buyPotion, buyUpgrade, ping, MONSTERS, drinkPotion, ITEMS, CHAMPS, isInvulnerable, flash };
     return;
 }
 
@@ -1132,8 +1221,24 @@ potionBtn.className = 'shop-item';
 potionBtn.innerHTML = `<b>🧪 Health Potion</b>Heals ${POTION.heal} HP over ${POTION.dur}s (key 1) · <span>${POTION.cost}g</span>`;
 potionBtn.addEventListener('click', () => { buyPotion(player); renderShop(); });
 $('shop-items').prepend(potionBtn);
+const upHead = document.createElement('h3');
+upHead.className = 'shop-sub';
+upHead.textContent = 'Troop upgrades (your whole team\'s minions)';
+$('shop-items').appendChild(upHead);
+const upgradeButtons = TROOP_UPGRADES.map((up) => {
+    const b = document.createElement('button');
+    b.className = 'shop-item upgrade';
+    b.addEventListener('click', () => { buyUpgrade(player, up.id); renderShop(); });
+    $('shop-items').appendChild(b);
+    return { b, up };
+});
 function renderShop() {
     const canShop = inFountain(player, player.team) || !player.alive;
+    for (const { b, up } of upgradeButtons) {
+        const tier = world.upgrades[player.team][up.id], maxed = tier >= up.costs.length;
+        b.innerHTML = `<b>${up.icon} ${up.name} <em class="tier">${'★'.repeat(tier)}${'☆'.repeat(up.costs.length - tier)}</em></b>${up.desc} · <span>${maxed ? 'MAX' : up.costs[tier] + 'g'}</span>`;
+        b.disabled = !canShop || maxed || player.gold < up.costs[tier];
+    }
     potionBtn.disabled = !canShop || player.gold < POTION.cost || player.potions >= POTION.max;
     for (const { b, it } of shopButtons) {
         const owned = it.unique && player.items.some((i) => i.id === it.id);
@@ -1318,6 +1423,15 @@ function updateHud() {
     $('st-as').textContent = currentAs(p).toFixed(2);
     $('st-ms').textContent = Math.round(currentSpeed(p));
     $('kda').textContent = `${p.kills}/${p.deaths}/${p.assists}`;
+    if ($('buffs')) {
+        const chips = [];
+        if (world.buffs[p.team] > world.time) chips.push(`<span class="buff drake">🐉 ${Math.ceil(world.buffs[p.team] - world.time)}s</span>`);
+        if (p.golemT > world.time) chips.push(`<span class="buff golem">🗿 ${Math.ceil(p.golemT - world.time)}s</span>`);
+        const up = world.upgrades[p.team], tiers = up.dmg + up.hp + up.siege;
+        if (tiers) chips.push(`<span class="buff troops" title="Troop upgrades">⚔ T${tiers}</span>`);
+        const html = chips.join('');
+        if ($('buffs').innerHTML !== html) $('buffs').innerHTML = html;
+    }
     potionEl.querySelector('.count').textContent = p.potions;
     potionEl.classList.toggle('ready', p.potions > 0 && p.potionT <= 0);
     potionEl.querySelector('.cd').classList.toggle('hidden', p.potionT <= 0);
@@ -1930,7 +2044,32 @@ function drawNexus(u, dt) {
     u.r = saved;
 }
 
+function drawMonster(u, dt) {
+    const m = MONSTERS[u.mkey], t = world.time, r = u.r;
+    walkPhase(u, dt);
+    ellipse(u.x, u.y + r * 0.6, r * 1.1, r * 0.45, 'rgba(0,0,0,0.35)');
+    ctx.save(); ctx.translate(u.x, u.y);
+    if (u.mkey === 'drake') {
+        const flap = Math.sin(t * 6) * 0.35;
+        for (const sgn of [-1, 1]) {
+            ctx.save(); ctx.scale(sgn, 1); ctx.rotate(-0.3 + flap);
+            ctx.fillStyle = shade(m.color, -0.35); ctx.beginPath(); ctx.moveTo(r * 0.3, -r * 0.2); ctx.lineTo(r * 1.9, -r * 1.1); ctx.lineTo(r * 1.5, -r * 0.1); ctx.lineTo(r * 1.1, r * 0.2); ctx.closePath(); ctx.fill();
+            ctx.restore();
+        }
+        ctx.fillStyle = m.color; ctx.beginPath(); ctx.ellipse(0, 0, r * 0.75, r * 0.95, 0, 0, TAU); ctx.fill();
+        ctx.fillStyle = shade(m.color, 0.25); ctx.beginPath(); ctx.arc(0, -r * 0.85, r * 0.45, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#fff4a0'; ctx.beginPath(); ctx.arc(-r * 0.15, -r * 0.95, 4, 0, TAU); ctx.arc(r * 0.15, -r * 0.95, 4, 0, TAU); ctx.fill();
+    } else {
+        ctx.fillStyle = '#6c7380'; ctx.beginPath(); ctx.arc(0, 0, r * 0.9, 0, TAU); ctx.fill();
+        ctx.fillStyle = '#868d9a'; for (const sgn of [-1, 1]) { ctx.beginPath(); ctx.arc(sgn * r * 0.95, -r * 0.1 + Math.sin(t * 3 + sgn) * 3, r * 0.42, 0, TAU); ctx.fill(); }
+        ctx.fillStyle = m.color; ctx.globalAlpha = 0.7 + 0.3 * Math.sin(t * 4); ctx.beginPath(); ctx.arc(0, -r * 0.1, r * 0.3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+    hpBar(u, 90, 14, '#f0a040', { h: 6, dt });
+}
+
 function drawUnit(u, dt) {
+    if (u.kind === 'monster') { if (u.alive) drawMonster(u, dt); return; }
     if (u.kind === 'tower') drawTower(u, dt);
     else if (u.kind === 'nexus') drawNexus(u, dt);
     else if (!u.alive) return;
@@ -2243,6 +2382,13 @@ function drawMinimap() {
         else if (u.kind === 'minion') { ctx.beginPath(); ctx.arc(u.x, u.y, 32, 0, TAU); ctx.fill(); }
     }
     for (const u of world.units) {
+        if (u.kind !== 'monster') continue;
+        ctx.globalAlpha = u.alive ? 1 : 0.3;
+        ctx.fillStyle = MONSTERS[u.mkey].color; ctx.strokeStyle = '#000'; ctx.lineWidth = 24;
+        ctx.beginPath(); ctx.moveTo(u.x, u.y - 150); ctx.lineTo(u.x + 130, u.y); ctx.lineTo(u.x, u.y + 150); ctx.lineTo(u.x - 130, u.y); ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.globalAlpha = 1;
+    }
+    for (const u of world.units) {
         if (!u.alive || u.kind !== 'champ') continue;
         ctx.fillStyle = u.def.color; ctx.beginPath(); ctx.arc(u.x, u.y, 120, 0, TAU); ctx.fill();
         ctx.lineWidth = 34; ctx.strokeStyle = u.isPlayer ? '#ffd75a' : TEAM_COLOR[u.team]; ctx.stroke();
@@ -2524,6 +2670,11 @@ function create3D() {
             else { rig.add(part(G.cone, mat(shade(team, -0.3)), r * 0.15, r * 2.05, 0, r * 0.38, r * 0.7, r * 0.38)); rig.add(part(G.sphere, glowMat(0xffe08a), r * 0.75, r * 1.0, r * 0.5, r * 0.18)); const h = halo(0xffd070, r * 1.4, 0.55); h.position.set(r * 0.75, r * 1.0, r * 0.5); rig.add(h); }
         }
         const hit = halo(0xffffff, r * 3, 0.0); hit.position.y = r; g.add(hit);
+        if (u.tier > 0) {
+            const trim = part(G.ring, mat(0xffd75a, { metalness: 0.8, roughness: 0.25, emissive: 0x6a4a00, emissiveIntensity: 0.4 }), 0, r * 0.85, 0, r * 0.8);
+            trim.rotation.x = Math.PI / 2; rig.add(trim);
+            if (u.tier >= 3) rig.add(part(G.cone, mat(0xffd75a, { metalness: 0.8, roughness: 0.25 }), r * 0.2, r * 2.0, 0, r * 0.2, r * 0.35, r * 0.2));
+        }
         g.userData = { rig, hit };
         return g;
     }
@@ -2571,6 +2722,48 @@ function create3D() {
         return g;
     }
 
+    function buildMonster(u) {
+        const g = new T.Group(), r = u.r, m = MONSTERS[u.mkey];
+        const rig = new T.Group(); g.add(rig);
+        if (u.mkey === 'drake') {
+            const scale = mat(m.color, { roughness: 0.5, metalness: 0.2 }), dark = mat(shade(m.color, -0.4));
+            rig.add(part(G.sphere, scale, 0, r * 0.9, 0, r * 0.9, r * 0.6, r * 0.6));
+            const neck = part(G.cyl, scale, r * 0.75, r * 1.25, 0, r * 0.22, r * 0.8, r * 0.22); neck.rotation.z = -0.8; rig.add(neck);
+            rig.add(part(G.box, scale, r * 1.15, r * 1.6, 0, r * 0.6, r * 0.35, r * 0.4));
+            for (const sg of [-1, 1]) {
+                rig.add(part(G.cone, mat(0xf2e6c8), r * 1.0, r * 1.9, sg * r * 0.15, r * 0.06, r * 0.35, r * 0.06));
+                rig.add(part(G.sphere, glowMat(0xfff080), r * 1.4, r * 1.68, sg * r * 0.14, r * 0.06));
+                rig.add(part(G.cyl, dark, -r * 0.1, r * 0.35, sg * r * 0.35, r * 0.13, r * 0.6, r * 0.13));
+            }
+            const tail = part(G.cone, scale, -r * 1.2, r * 0.8, 0, r * 0.25, r * 1.3, r * 0.25); tail.rotation.z = Math.PI / 2 + 0.3; rig.add(tail);
+            const wings = [];
+            for (const sg of [-1, 1]) {
+                const w = new T.Group(); w.position.set(r * 0.1, r * 1.2, sg * r * 0.4); rig.add(w);
+                const shape = new T.Shape(); shape.moveTo(0, 0); shape.lineTo(r * 0.6, r * 1.9); shape.lineTo(-r * 0.4, r * 1.5); shape.lineTo(-r * 0.9, r * 0.6); shape.lineTo(0, 0);
+                const wm = new T.Mesh(new T.ShapeGeometry(shape), mat(shade(m.color, -0.25), { side: T.DoubleSide }));
+                wm.rotation.x = sg * Math.PI / 2; wm.castShadow = true; w.add(wm); w.userData.s = sg; wings.push(w);
+            }
+            const fire = halo(0xff7a20, r * 2.2, 0.0); fire.position.set(r * 1.6, r * 1.6, 0); rig.add(fire);
+            g.userData = { rig, wings, fire };
+        } else {
+            const stone = mat(0x6c7380, { roughness: 0.95, flatShading: true }), light = mat(0x868d9a, { roughness: 0.9, flatShading: true });
+            rig.add(part(G.oct, stone, 0, r * 1.15, 0, r * 0.85, r * 0.75, r * 0.7));
+            rig.add(part(G.oct, light, r * 0.15, r * 1.95, 0, r * 0.38));
+            const arms = [];
+            for (const sg of [-1, 1]) {
+                const a = new T.Group(); a.position.set(0, r * 1.45, sg * r * 0.85); rig.add(a);
+                a.add(part(G.oct, light, 0, -r * 0.45, 0, r * 0.32, r * 0.55, r * 0.32));
+                a.add(part(G.box, stone, 0, -r * 0.95, 0, r * 0.4));
+                arms.push(a);
+                rig.add(part(G.box, stone, 0, r * 0.3, sg * r * 0.4, r * 0.38, r * 0.6, r * 0.38));
+            }
+            const core = part(G.oct, glowMat(m.color), r * 0.62, r * 1.2, 0, r * 0.22); core.castShadow = false; rig.add(core);
+            const ch = halo(m.color, r * 2.4, 0.5); ch.position.set(r * 0.7, r * 1.2, 0); rig.add(ch);
+            g.userData = { rig, arms, core };
+        }
+        return g;
+    }
+
     const meshes = new Map(), dying = new Set();
     // Units topple over and sink into the ground instead of vanishing.
     function dieAnim(g, d, dt) {
@@ -2584,13 +2777,30 @@ function create3D() {
     function sync(u, dt) {
         let g = meshes.get(u);
         if (!g) {
-            g = u.kind === 'champ' ? buildChampion(u) : u.kind === 'minion' ? buildMinion(u) : u.kind === 'tower' ? buildTower(u) : buildNexus(u);
-            if (u.kind === 'champ') g.scale.setScalar(1.45); else if (u.kind === 'minion') g.scale.setScalar(1.25);
+            g = u.kind === 'champ' ? buildChampion(u) : u.kind === 'minion' ? buildMinion(u) : u.kind === 'monster' ? buildMonster(u) : u.kind === 'tower' ? buildTower(u) : buildNexus(u);
+            if (u.kind === 'champ') g.scale.setScalar(1.45); else if (u.kind === 'minion') g.scale.setScalar(1.25 * (1 + 0.04 * (u.tier || 0)));
             meshes.set(u, g); scene.add(g);
         }
         const d = g.userData, t = world.time;
         g.visible = true;
         g.position.set(u.x, 0, u.y);
+        if (u.kind === 'monster') {
+            if (!u.alive) { if (d.deadT === undefined || d.deadT < 1.1) dieAnim(g, d, dt); else g.visible = false; return; }
+            if (d.deadT !== undefined) { d.deadT = undefined; d.rig.rotation.x = 0; g.position.y = 0; }
+            const facing = u.order && u.order.target ? Math.atan2(u.order.target.y - u.y, u.order.target.x - u.x) : (u.facing ?? Math.PI * 0.75);
+            d.rig.rotation.y = -facing;
+            const atk = u.atkAnim > 0 ? Math.sin((1 - u.atkAnim / 0.25) * Math.PI) : 0;
+            if (u.mkey === 'drake') {
+                d.rig.position.y = 30 + Math.sin(t * 2.5) * 8;
+                d.wings.forEach((w) => { w.rotation.x = w.userData.s * (Math.sin(t * 6) * 0.5 - 0.2); });
+                d.fire.material.opacity = atk * 0.9;
+            } else {
+                d.arms[0].rotation.z = -atk * 1.4;
+                d.arms[1].rotation.z = Math.sin(t * 2) * 0.1;
+                d.core.rotation.y = t * 2;
+            }
+            return;
+        }
         if (u.kind === 'champ' || u.kind === 'minion') {
             if (!u.alive) { dieAnim(g, d, dt); return; }
             if (d.deadT !== undefined) { d.deadT = undefined; d.rig.rotation.x = 0; g.position.y = 0; }
@@ -2694,7 +2904,7 @@ function create3D() {
 }
 
 // 2D overlay pieces drawn on top of the 3D scene.
-const MODEL_TOP = { champ: 3.3, minion: 2.4, tower: 150, nexus: 200 };
+const MODEL_TOP = { champ: 3.3, minion: 2.4, tower: 150, nexus: 200, monster: 2.6 };
 function overlayAt(u, top, yOff, fn) {
     const h = Math.max(0, top - (u.r + yOff) / Math.max(SIN, 0.01) * 0.9);
     ctx.save();
@@ -2753,6 +2963,12 @@ function drawLabels3D(dt) {
             });
         } else if (u.kind === 'minion') {
             if (u.hp < u.maxHp) overlayAt(u, u.r * MODEL_TOP.minion, 8, () => hpBar(u, 32, 8, ally ? '#4fd16a' : '#e84a4a', { h: 4, dt }));
+        } else if (u.kind === 'monster') {
+            overlayAt(u, u.r * MODEL_TOP.monster + (u.mkey === 'drake' ? 40 : 0), 10, () => {
+                hpBar(u, 100, 12, '#f0a040', { h: 6, dt });
+                ctx.fillStyle = '#ffe0a0'; ctx.font = 'bold 13px system-ui'; ctx.textAlign = 'center';
+                ctx.fillText(u.name, u.x, u.y - u.r - 22);
+            });
         } else if (u.kind === 'tower') {
             overlayAt(u, MODEL_TOP.tower, 0, () => hpBar(u, 84, 0, ally ? '#4fd16a' : '#e84a4a', { ticks: true, h: 7, dt }));
         } else {

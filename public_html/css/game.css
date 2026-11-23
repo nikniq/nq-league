@@ -379,3 +379,13 @@ body.touch .view-toggle { top: calc(6px + env(safe-area-inset-top)); left: auto;
 .cam-hint kbd { font-size: 11px; }
 .keys-toggle { left: 64px; }
 body.touch .keys-toggle { display: none; }
+
+.buffs { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); display: flex; gap: 6px; pointer-events: none; }
+.buff { padding: 2px 8px; border-radius: 10px; font: 700 12px system-ui; background: rgba(10, 15, 26, .8); border: 1px solid; }
+.buff.drake { color: #ffb070; border-color: #ff8a3a; }
+.buff.golem { color: #bfe6ff; border-color: #8fd0ff; }
+.buff.troops { color: var(--gold); border-color: var(--gold); }
+.cam-hint { top: 72px; }
+.shop-sub { grid-column: 1 / -1; margin: 10px 0 2px; font-size: 13px; color: var(--gold); }
+.shop-item .tier { font-style: normal; color: var(--gold); margin-left: 4px; }
+#feed .neutral { border-color: #f0a040; }

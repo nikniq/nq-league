@@ -14,6 +14,7 @@
         <span id="clock">00:00</span>
         <span class="team red" id="score-red">0</span>
     </div>
+    <div id="buffs" class="buffs"></div>
     <div id="feed"></div>
     <div id="cam-hint" class="cam-hint hidden">Camera free · <kbd>Space</kbd> to recenter · <kbd>Y</kbd> to lock</div>
     <button type="button" id="view-toggle" class="view-toggle" title="Toggle 3D / 2D view (G)">3D</button>
