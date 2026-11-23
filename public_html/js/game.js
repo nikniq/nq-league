@@ -1009,6 +1009,8 @@ let hoverAbility = -1;
 
 setupGame(cfg);
 if (/[?&]autoplay/.test(location.search)) { world.autoplay = true; cam.locked = true; }
+// Debug: ?spot=drake parks the camera on the Drake pit (used for screenshots).
+if (/[?&]spot=drake/.test(location.search)) { cam.locked = false; cam.spot = MONSTERS.drake; }
 cam.x = player.x; cam.y = player.y;
 
 feed = (text, team) => {
@@ -3069,6 +3071,7 @@ function updateCamera(dt) {
         const speed = 1700 / Math.max(zoom, 0.6) * dt;
         cam.x += px * speed; cam.y += py * speed / COS;
     }
+    if (cam.spot) { cam.x = cam.spot.x; cam.y = cam.spot.y; }
     if (cam.locked) {
         cam.x += (player.x - cam.x) * Math.min(1, dt * 10);
         cam.y += (player.y - cam.y) * Math.min(1, dt * 10);
