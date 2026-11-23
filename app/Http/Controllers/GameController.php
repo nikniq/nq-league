@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\GameMatch;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -12,17 +13,7 @@ class GameController extends Controller
 
     public function home()
     {
-        $leaders = GameMatch::query()
-            ->select('player_name',
-                DB::raw('SUM(victory) as wins'),
-                DB::raw('COUNT(*) as games'),
-                DB::raw('SUM(kills) as kills'),
-                DB::raw('SUM(deaths) as deaths'))
-            ->groupBy('player_name')
-            ->orderByDesc('wins')
-            ->orderBy('games')
-            ->limit(10)
-            ->get();
+        $leaders = $this->rankings()->limit(5)->get();
 
         $recent = GameMatch::latest()->limit(8)->get();
 
@@ -33,6 +24,56 @@ class GameController extends Controller
         ];
 
         return view('home', compact('leaders', 'recent', 'stats'));
+    }
+
+    public const SORTS = ['wins' => 'Wins', 'winrate' => 'Win rate', 'kills' => 'Kills', 'kda' => 'K/D'];
+
+    public const PERIODS = ['all' => 'All time', 'month' => 'This month', 'week' => 'This week'];
+
+    public function leaderboard(Request $request)
+    {
+        $filters = $request->validate([
+            'sort' => ['nullable', 'in:'.implode(',', array_keys(self::SORTS))],
+            'champion' => ['nullable', 'in:'.implode(',', self::CHAMPIONS)],
+            'period' => ['nullable', 'in:'.implode(',', array_keys(self::PERIODS))],
+        ]) + ['sort' => 'wins', 'champion' => null, 'period' => 'all'];
+
+        $rows = $this->rankings($filters['sort'], $filters['champion'], $filters['period'])->limit(100)->get();
+
+        return view('leaderboard', [
+            'rows' => $rows,
+            'filters' => $filters,
+            'sorts' => self::SORTS,
+            'periods' => self::PERIODS,
+            'champions' => self::CHAMPIONS,
+        ]);
+    }
+
+    /**
+     * Per-player aggregate standings. Win rate ranking requires at least 3 games so one lucky win cannot top it.
+     */
+    private function rankings(string $sort = 'wins', ?string $champion = null, string $period = 'all'): Builder
+    {
+        $query = GameMatch::query()
+            ->select('player_name',
+                DB::raw('SUM(victory) as wins'),
+                DB::raw('COUNT(*) as games'),
+                DB::raw('SUM(kills) as kills'),
+                DB::raw('SUM(deaths) as deaths'),
+                DB::raw('MAX(level) as best_level'),
+                DB::raw('ROUND(100.0 * SUM(victory) / COUNT(*)) as winrate'),
+                DB::raw('1.0 * SUM(kills) / CASE WHEN SUM(deaths) = 0 THEN 1 ELSE SUM(deaths) END as kda'))
+            ->when($champion, fn (Builder $q) => $q->where('champion', $champion))
+            ->when($period === 'week', fn (Builder $q) => $q->where('created_at', '>=', now()->subWeek()))
+            ->when($period === 'month', fn (Builder $q) => $q->where('created_at', '>=', now()->subMonth()))
+            ->groupBy('player_name');
+
+        return match ($sort) {
+            'winrate' => $query->havingRaw('COUNT(*) >= 3')->orderByDesc('winrate')->orderByDesc('games'),
+            'kills' => $query->orderByDesc('kills')->orderBy('games'),
+            'kda' => $query->orderByDesc('kda')->orderByDesc('kills'),
+            default => $query->orderByDesc('wins')->orderBy('games'),
+        };
     }
 
     public function play(Request $request)

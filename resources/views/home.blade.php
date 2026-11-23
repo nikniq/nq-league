@@ -112,7 +112,7 @@
 
     <section class="boards" id="leaderboard">
         <div class="board">
-            <h2>Leaderboard</h2>
+            <h2>Top Summoners</h2>
             <table>
                 <thead><tr><th>#</th><th>Summoner</th><th>W</th><th>G</th><th>K/D</th></tr></thead>
                 <tbody>
@@ -129,6 +129,7 @@
                 @endforelse
                 </tbody>
             </table>
+            <a href="{{ route('leaderboard') }}" class="board-more">Full leaderboard ▸</a>
         </div>
         <div class="board">
             <h2>Recent Matches</h2>

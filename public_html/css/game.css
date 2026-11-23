@@ -389,3 +389,20 @@ body.touch .keys-toggle { display: none; }
 .shop-sub { grid-column: 1 / -1; margin: 10px 0 2px; font-size: 13px; color: var(--gold); }
 .shop-item .tier { font-style: normal; color: var(--gold); margin-left: 4px; }
 #feed .neutral { border-color: #f0a040; }
+
+/* Leaderboard page */
+.board-more { display: inline-block; margin-top: 10px; color: var(--gold); font-size: 13px; text-decoration: none; }
+.board-more:hover { text-decoration: underline; }
+.lb-page { max-width: 960px; margin: 0 auto; padding: 40px 16px 60px; }
+.lb-page h1 { margin: 0 0 4px; color: var(--gold); }
+.lb-filters { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 18px 0; align-items: center; }
+.lb-filters .grp { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lb-filters .lbl { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; opacity: .6; margin-right: 2px; }
+.chip { padding: 5px 11px; border: 1px solid var(--line); border-radius: 999px; font-size: 13px; color: inherit; text-decoration: none; background: var(--panel); }
+.chip:hover { border-color: var(--gold); }
+.chip.on { background: var(--gold); border-color: var(--gold); color: #111; font-weight: 600; }
+.lb-table td.rank { font-weight: 700; width: 3em; }
+.lb-table tr.top1 td.rank { color: #ffd34d; } .lb-table tr.top2 td.rank { color: #d6dde6; } .lb-table tr.top3 td.rank { color: #e0965a; }
+.lb-table tr.me td { background: rgba(255, 211, 77, .08); }
+.lb-table td.num, .lb-table th.num { text-align: right; }
+.lb-table th.sorted { color: var(--gold); }

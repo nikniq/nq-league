@@ -31,7 +31,7 @@
             <nav class="site-nav">
                 <a href="{{ route('home') }}#features">Features</a>
                 <a href="{{ route('home') }}#champions">Champions</a>
-                <a href="{{ route('home') }}#leaderboard">Leaderboard</a>
+                <a href="{{ route('leaderboard') }}">Leaderboard</a>
             </nav>
             <div class="site-auth">
                 @auth
@@ -61,7 +61,7 @@
             <div>
                 <h4>Play</h4>
                 <a href="{{ route('home') }}#champions">Pick a champion</a>
-                <a href="{{ route('home') }}#leaderboard">Leaderboard</a>
+                <a href="{{ route('leaderboard') }}">Leaderboard</a>
                 <a href="{{ route('home') }}#faq">FAQ</a>
             </div>
             <div>
