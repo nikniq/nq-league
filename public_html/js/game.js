@@ -10,7 +10,7 @@ const TEAM_COLOR = { blue: '#4f8cff', red: '#ff5a5a', neutral: '#f0a040' };
 const NEUTRAL = 'neutral';
 /** River objectives. Drake buffs the whole team's damage; Golem empowers its killer. */
 const MONSTERS = {
-    drake: { name: 'Drake', x: 2780, y: 2780, hp: 3200, ad: 70, armor: 30, range: 320, ranged: true, r: 48, as: 0.55, first: 120, respawn: 150, gold: 150, xp: 300, color: '#ff8a3a' },
+    drake: { name: 'Drake', x: 2780, y: 2780, hp: 3200, ad: 70, armor: 30, range: 320, ranged: true, r: 48, as: 0.55, first: 120, respawn: 150, gold: 150, xp: 300, color: '#d9441a' },
     golem: { name: 'Golem', x: 1220, y: 1220, hp: 2600, ad: 60, armor: 40, range: 150, ranged: false, r: 44, as: 0.7, first: 90, respawn: 120, gold: 120, xp: 250, color: '#8fd0ff' },
 };
 const DRAKE_BUFF = { dur: 120, dmg: 0.12 };
