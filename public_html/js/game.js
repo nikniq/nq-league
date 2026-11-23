@@ -181,7 +181,7 @@ let world;
 let nextId = 1;
 
 function newWorld() {
-    return { time: 0, units: [], projectiles: [], effects: [], timers: [], nextWave: 5, wave: 0, kills: { blue: 0, red: 0 }, over: false };
+    return { pings: [], time: 0, units: [], projectiles: [], effects: [], timers: [], nextWave: 5, wave: 0, kills: { blue: 0, red: 0 }, over: false };
 }
 
 function makeUnit(o) {
@@ -671,6 +671,25 @@ function updateProjectiles(dt) {
     world.projectiles = out;
 }
 
+// ---------- Pings ----------
+/**
+ * Map alert from a champion. 'help' pulls the nearest idle allied bot toward the spot
+ * for a few seconds; 'danger' makes allied bots near the spot back off.
+ */
+function ping(from, type, x, y) {
+    world.pings = world.pings.filter((p) => world.time - p.t < 4);
+    if (world.pings.filter((p) => p.from === from && world.time - p.t < 3).length >= 3) return false;
+    world.pings.push({ from, type, x, y, t: world.time, team: from.team });
+    const allies = champsOf(from.team).filter((c) => c !== from && c.alive && !c.isPlayer);
+    if (type === 'help') {
+        const helper = allies.filter((c) => !c.retreating && c.hp > c.maxHp * 0.5).sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y))[0];
+        if (helper) helper.assistGoal = { x, y, until: world.time + 12 };
+    } else {
+        for (const c of allies) if (Math.hypot(c.x - x, c.y - y) < 1200) { c.assistGoal = null; c.dangerT = world.time + 4; }
+    }
+    return true;
+}
+
 // ---------- Player auto-attack ----------
 /**
  * When the player is idle, automatically fire at the best enemy in attack range:
@@ -744,6 +763,14 @@ function botAI(u, dt) {
             u.order = { type: 'attack', target: enemyChamp }; return;
         }
     }
+
+    // Answer a help ping: head to the spot (fighting anything met on the way above).
+    if (u.assistGoal) {
+        if (world.time > u.assistGoal.until || Math.hypot(u.x - u.assistGoal.x, u.y - u.assistGoal.y) < 250) u.assistGoal = null;
+        else { u.order = { type: 'move', x: u.assistGoal.x, y: u.assistGoal.y }; return; }
+    }
+    // Danger ping: hold back toward home for a moment.
+    if (u.dangerT && world.time < u.dangerT) { const back = clampTo(u, home.x, home.y, 400); u.order = { type: 'move', x: back.x, y: back.y }; return; }
 
     // Farm: last-hit low minions, otherwise hit the lowest minion near the wave.
     const minions = world.units.filter((m) => m.kind === 'minion' && m.alive && m.team !== u.team && dist(u, m) < 800 && !towerNear(m, enemy(u.team)));
@@ -843,7 +870,7 @@ let onGameOver = null;
 let feed = () => {}, banner = () => {}, fxEvent = () => {};
 
 if (typeof window === 'undefined' || !document.getElementById('game')) {
-    if (typeof module !== 'undefined') module.exports = { setupGame, update, getWorld: () => world, getPlayer: () => player, cast, buy, buyPotion, drinkPotion, ITEMS, CHAMPS, isInvulnerable, flash };
+    if (typeof module !== 'undefined') module.exports = { setupGame, update, getWorld: () => world, getPlayer: () => player, cast, buy, buyPotion, ping, drinkPotion, ITEMS, CHAMPS, isInvulnerable, flash };
     return;
 }
 
@@ -935,21 +962,57 @@ function minimapHit(sx, sy) {
 }
 
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+let pressPing = null;
+canvas.addEventListener('pointerup', () => { clearTimeout(pressPing); });
 canvas.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' || paused || world.over) return;
     e.preventDefault();
+    const mmPing = minimapHit(e.clientX, e.clientY);
+    if (mmPing) {
+        // Long-press the minimap to send a help ping; a short tap still walks there.
+        clearTimeout(pressPing);
+        pressPing = setTimeout(() => { sendPing('help', mmPing); pressPing = null; }, 450);
+    }
     issueOrder(minimapHit(e.clientX, e.clientY) || toWorld(e.clientX, e.clientY));
 });
-canvas.addEventListener('mousemove', (e) => { mouse.sx = e.clientX; mouse.sy = e.clientY; mouse.inside = true; });
-canvas.addEventListener('mouseleave', () => { mouse.inside = false; });
+// Track the mouse over the whole window (HUD included) so edge scrolling works at every edge.
+window.addEventListener('mousemove', (e) => {
+    mouse.sx = e.clientX; mouse.sy = e.clientY; mouse.inside = true;
+    if (pan) { cam.x -= e.movementX / zoom; cam.y -= e.movementY / zoom / COS; }
+});
+document.documentElement.addEventListener('mouseleave', () => { mouse.inside = false; });
+window.addEventListener('blur', () => { mouse.inside = false; keysDown.clear(); });
+let pan = false;
+window.addEventListener('mouseup', (e) => { if (e.button === 1) pan = false; });
 canvas.addEventListener('mousedown', (e) => {
     if (paused || world.over) return;
     const mm = minimapHit(e.clientX, e.clientY);
+    if (e.altKey && (e.button === 0 || e.button === 2)) { sendPing(e.button === 2 ? 'danger' : 'help', mm || toWorld(e.clientX, e.clientY)); return; }
     if (e.button === 0 && mm) { cam.locked = false; cam.x = mm.x; cam.y = mm.y; return; }
-    if (e.button !== 2) return;
+    if (e.button === 1) { e.preventDefault(); pan = true; cam.locked = false; return; }
+    if (e.button !== 2 && e.button !== 0) return;
     const w = mm || toWorld(e.clientX, e.clientY);
     issueOrder(w);
+    if (!mm) moveHeld = { button: e.button, t: 0.15 };
 });
+// Holding a mouse button keeps steering the champion toward the cursor.
+let moveHeld = null;
+window.addEventListener('mouseup', (e) => { if (moveHeld && moveHeld.button === e.button) moveHeld = null; });
+function applyHeldMove(dt) {
+    if (!moveHeld || paused || world.over || !player.alive) return;
+    moveHeld.t -= dt;
+    if (moveHeld.t > 0) return;
+    moveHeld.t = 0.12;
+    const w = toWorld(mouse.sx, mouse.sy);
+    if (player.order && player.order.type === 'attack' && !player.order.auto) return;
+    player.order = { type: 'move', x: w.x, y: w.y };
+}
+
+function sendPing(type, w) {
+    if (!ping(player, type, clamp(w.x, 0, MAP), clamp(w.y, 0, MAP))) return;
+    feed(`${player.name}: ${type === 'help' ? 'Help here!' : 'Danger!'}`, player.team);
+    window.nqBuzz && window.nqBuzz(15);
+}
 
 function issueOrder(w) {
     if (!player.alive) return;
@@ -967,6 +1030,7 @@ const keysDown = new Set();
 window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
     if (k === 'escape') { if (!$('shop').classList.contains('hidden')) $('shop').classList.add('hidden'); else if (!world.over) paused = !paused; return; }
+    if (k.startsWith('arrow') || k === ' ') e.preventDefault();
     if (paused || world.over || e.repeat) return;
     keysDown.add(k);
     const w = toWorld(mouse.sx, mouse.sy);
@@ -2074,6 +2138,27 @@ const miniCanvas = (() => {
     return c;
 })();
 
+/** Pings drawn on the ground in the world view (ground transform active). */
+function drawPings() {
+    for (const p of world.pings) {
+        const a = world.time - p.t;
+        if (a > 4 || p.team !== player.team) continue;
+        const col = p.type === 'help' ? '255,215,90' : '255,77,77';
+        const fade = Math.max(0, 1 - a / 4);
+        for (let k = 0; k < 3; k++) {
+            const ph = (a * 1.2 + k / 3) % 1;
+            ctx.strokeStyle = `rgba(${col},${fade * (1 - ph)})`; ctx.lineWidth = 4;
+            ctx.beginPath(); ctx.arc(p.x, p.y, 30 + ph * 140, 0, TAU); ctx.stroke();
+        }
+        ctx.save(); ctx.translate(p.x, p.y - lift(60) - 40 - Math.abs(Math.sin(a * 5)) * 12); ctx.scale(1, 1 / COS);
+        ctx.fillStyle = `rgba(${col},${fade})`; ctx.strokeStyle = `rgba(0,0,0,${fade})`; ctx.lineWidth = 4;
+        ctx.font = 'bold 44px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        const sym = p.type === 'help' ? '➜' : '!';
+        ctx.strokeText(sym, 0, 0); ctx.fillText(sym, 0, 0);
+        ctx.restore();
+    }
+}
+
 function drawMinimap() {
     const m = minimapRect(), k = m.s / MAP;
     ctx.fillStyle = 'rgba(8,12,20,0.95)'; ctx.fillRect(m.x - 5, m.y - 5, m.s + 10, m.s + 10);
@@ -2091,6 +2176,16 @@ function drawMinimap() {
         if (!u.alive || u.kind !== 'champ') continue;
         ctx.fillStyle = u.def.color; ctx.beginPath(); ctx.arc(u.x, u.y, 120, 0, TAU); ctx.fill();
         ctx.lineWidth = 34; ctx.strokeStyle = u.isPlayer ? '#ffd75a' : TEAM_COLOR[u.team]; ctx.stroke();
+    }
+    for (const p of world.pings) {
+        const a = world.time - p.t;
+        if (a > 4 || p.team !== player.team) continue;
+        const col = p.type === 'help' ? '#ffd75a' : '#ff4d4d';
+        ctx.strokeStyle = col; ctx.globalAlpha = Math.max(0, 1 - a / 4);
+        for (let k = 0; k < 2; k++) { const ph = (a * 1.4 + k * 0.5) % 1; ctx.lineWidth = 30; ctx.beginPath(); ctx.arc(p.x, p.y, 120 + ph * 420, 0, TAU); ctx.stroke(); }
+        ctx.fillStyle = col; ctx.font = 'bold 360px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(p.type === 'help' ? '➜' : '!', p.x, p.y);
+        ctx.globalAlpha = 1;
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 18;
     ctx.strokeRect(cam.x - W / 2 / zoom, cam.y - H / 2 / zoom / COS, W / zoom, H / zoom / COS);
@@ -2173,8 +2268,21 @@ function create3D() {
     outer.rotation.x = -Math.PI / 2; outer.position.set(MAP / 2, -2, MAP / 2);
     scene.add(outer);
     // River surface: a glossy translucent strip that catches the sun.
+    const rippleTex = (() => {
+        const c = document.createElement('canvas'); c.width = c.height = 256;
+        const g = c.getContext('2d'), rr = rng(77);
+        g.fillStyle = '#7fb8d8'; g.fillRect(0, 0, 256, 256);
+        g.lineCap = 'round';
+        for (let i = 0; i < 90; i++) {
+            const x = rr() * 256, y = rr() * 256, w = 10 + rr() * 34;
+            g.strokeStyle = `rgba(235,250,255,${0.25 + rr() * 0.5})`; g.lineWidth = 1 + rr() * 2;
+            g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + w / 2, y - 3 - rr() * 3, x + w, y); g.stroke();
+        }
+        const t = new T.CanvasTexture(c); t.wrapS = t.wrapT = T.RepeatWrapping; t.repeat.set(22, 1.1); t.encoding = T.sRGBEncoding;
+        return t;
+    })();
     const water = new T.Mesh(new T.PlaneGeometry(MAP * Math.SQRT2 + 400, 250),
-        new T.MeshPhongMaterial({ color: 0x3aa0d0, transparent: true, opacity: 0.28, shininess: 90, specular: 0xbfe8ff }));
+        new T.MeshPhongMaterial({ color: 0x3aa0d0, map: rippleTex, transparent: true, opacity: 0.28, shininess: 90, specular: 0xbfe8ff, depthWrite: false }));
     water.rotation.x = -Math.PI / 2; water.rotation.z = -Math.PI / 4; water.position.set(MAP / 2, 3, MAP / 2);
     scene.add(water);
 
@@ -2226,6 +2334,44 @@ function create3D() {
     grass.receiveShadow = true;
     scene.add(grass);
 
+    // Additive halo sprites fake a bloom glow around crystals and orbs.
+    const haloTex = (() => {
+        const c = document.createElement('canvas'); c.width = c.height = 128;
+        const g = c.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+        gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.25, 'rgba(255,255,255,0.45)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+        return new T.CanvasTexture(c);
+    })();
+    const haloMats = {};
+    const halo = (color, size, opacity = 0.7) => {
+        const m = haloMats[color + opacity] || (haloMats[color + opacity] = new T.SpriteMaterial({ map: haloTex, color, transparent: true, opacity, blending: T.AdditiveBlending, depthWrite: false, fog: false }));
+        const sp = new T.Sprite(m); sp.scale.set(size, size, 1); sp.renderOrder = 5;
+        return sp;
+    };
+
+    // Fireflies drifting over the jungle (animated entirely in the vertex shader).
+    const flyCount = isTouch ? 260 : 700, flyPos = [], flySeed = [];
+    { const rr = rng(909); while (flyPos.length / 3 < flyCount) { const x = rr() * MAP, y = rr() * MAP; if (nearLane(x, y, 160) || nearBase(x, y, 500)) continue; flyPos.push(x, 20 + rr() * 60, y); flySeed.push(rr() * 100); } }
+    const flyGeo = new T.BufferGeometry();
+    flyGeo.setAttribute('position', new T.Float32BufferAttribute(flyPos, 3));
+    flyGeo.setAttribute('seed', new T.Float32BufferAttribute(flySeed, 1));
+    const flyU = { value: 0 };
+    const flies = new T.Points(flyGeo, new T.ShaderMaterial({
+        uniforms: { uTime: flyU, uScale: { value: 1 } }, transparent: true, depthWrite: false, blending: T.AdditiveBlending,
+        vertexShader: `attribute float seed; uniform float uTime; uniform float uScale; varying float vA;
+            void main() {
+                vec3 p = position;
+                p.x += sin(uTime * 0.5 + seed) * 40.0; p.z += cos(uTime * 0.4 + seed * 1.3) * 40.0; p.y += sin(uTime * 1.3 + seed * 2.0) * 12.0;
+                vA = pow(max(0.0, sin(uTime * 1.7 + seed * 3.0)), 3.0);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+                gl_PointSize = (3.0 + 5.0 * vA) * uScale;
+            }`,
+        fragmentShader: `varying float vA;
+            void main() { float d = length(gl_PointCoord - 0.5); if (d > 0.5) discard; gl_FragColor = vec4(1.0, 0.95, 0.55, (1.0 - d * 2.0) * (0.15 + 0.85 * vA)); }`,
+    }));
+    flies.frustumCulled = false;
+    scene.add(flies);
+
     // A fixed pool of point lights handed to the brightest things in view each frame
     // (a constant light count avoids shader recompiles).
     const lights = Array.from({ length: isTouch ? 4 : 8 }, () => { const l = new T.PointLight(0xffffff, 0, 420, 2); scene.add(l); return l; });
@@ -2272,6 +2418,7 @@ function create3D() {
         } else if (u.key === 'arcanist') {
             arm.add(part(G.cyl, mat(0x6b4a2a), r * 0.2, r * 0.2, 0, r * 0.06, r * 1.9, r * 0.06));
             arm.add(part(G.sphere, glowMat(0xd7a8ff), r * 0.2, r * 1.2, 0, r * 0.2));
+            const h = halo(0xc58cff, r * 1.6); h.position.set(r * 0.2, r * 1.2, 0); arm.add(h);
         } else {
             const bow = part(G.bow, mat(0x8a5a2b), r * 0.55, 0, -r * 0.2, r * 0.75);
             bow.rotation.x = Math.PI / 2; bow.rotation.z = -Math.PI / 2; arm.add(bow);
@@ -2295,7 +2442,7 @@ function create3D() {
             rig.add(part(G.sphere, mat(team), 0, r * 0.8, 0, r * 0.75, r * 0.8, r * 0.75));
             rig.add(part(G.sphere, mat(0x2a2f3a), r * 0.2, r * 1.55, 0, r * 0.42));
             if (u.mtype === 'melee') rig.add(part(G.box, mat(0xd8dde6, { metalness: 0.7 }), r * 0.7, r * 0.9, r * 0.6, r * 0.9, r * 0.1, r * 0.14));
-            else { rig.add(part(G.cone, mat(shade(team, -0.3)), r * 0.15, r * 2.05, 0, r * 0.38, r * 0.7, r * 0.38)); rig.add(part(G.sphere, glowMat(0xffe08a), r * 0.75, r * 1.0, r * 0.5, r * 0.18)); }
+            else { rig.add(part(G.cone, mat(shade(team, -0.3)), r * 0.15, r * 2.05, 0, r * 0.38, r * 0.7, r * 0.38)); rig.add(part(G.sphere, glowMat(0xffe08a), r * 0.75, r * 1.0, r * 0.5, r * 0.18)); const h = halo(0xffd070, r * 1.4, 0.55); h.position.set(r * 0.75, r * 1.0, r * 0.5); rig.add(h); }
         }
         g.userData = { rig };
         return g;
@@ -2310,13 +2457,14 @@ function create3D() {
         alive.add(part(G.oct8, mat(0x6c717b), 0, 108, 0, 24, 8, 24));
         const crystal = part(G.oct, glowMat(team), 0, 128, 0, 13, 22, 13);
         crystal.castShadow = false; alive.add(crystal);
+        const cHalo = halo(team, 90, 0.55); cHalo.position.y = 128; alive.add(cHalo);
         const rubble = new T.Group(); g.add(rubble); rubble.visible = false;
         const rr = rng(u.id * 97);
         for (let i = 0; i < 10; i++) {
             const b = part(G.box, mat(i % 2 ? 0x4c4f57 : 0x6a6e77), (rr() - 0.5) * 80, 5 + rr() * 8, (rr() - 0.5) * 60, 10 + rr() * 16, 8 + rr() * 10, 10 + rr() * 14);
             b.rotation.set(rr() * 2, rr() * 3, rr()); rubble.add(b);
         }
-        g.userData = { alive, rubble, crystal };
+        g.userData = { alive, rubble, crystal, cHalo };
         return g;
     }
     function buildNexus(u) {
@@ -2325,12 +2473,13 @@ function create3D() {
         g.add(part(G.cyl, mat(0x777c86, { roughness: 0.85 }), 0, 26, 0, 84, 12, 84));
         const inner = part(G.ring, mat(team, { emissive: team, emissiveIntensity: 0.5 }), 0, 33, 0, 70); inner.rotation.x = Math.PI / 2; g.add(inner);
         const crystal = part(G.oct, glowMat(team), 0, 120, 0, 40, 75, 40); g.add(crystal);
+        const cHalo = halo(team, 300, 0.5); cHalo.position.y = 120; g.add(cHalo);
         const r1 = part(G.ring, mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.4 }), 0, 115, 0, 85);
         const r2 = part(G.ring, mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.4 }), 0, 115, 0, 66);
         r1.castShadow = r2.castShadow = false; g.add(r1, r2);
         const dome = part(G.dome, new T.MeshStandardMaterial({ color: 0xc8dcff, transparent: true, opacity: 0.16, emissive: 0x88aaff, emissiveIntensity: 0.3, depthWrite: false }), 0, 0, 0, 140);
         dome.castShadow = false; g.add(dome);
-        g.userData = { crystal, r1, r2, dome };
+        g.userData = { crystal, r1, r2, dome, cHalo };
         return g;
     }
 
@@ -2360,6 +2509,7 @@ function create3D() {
             const moving = (u.spd || 0) > 5;
             const bob = moving ? Math.abs(Math.sin((u.walkT || 0) * (u.kind === 'champ' ? 12 : 14) + u.id)) * (u.kind === 'champ' ? 4 : 2.5) : 0;
             d.rig.position.y = bob;
+            d.rig.scale.y = moving ? 1 : 1 + Math.sin(t * 2.4 + u.id) * 0.025;
             const facing = u.spin > 0 ? t * 22 : (u.facing ?? (u.team === BLUE ? -Math.PI / 4 : Math.PI * 0.75));
             d.rig.rotation.y = -facing;
             if (u.kind === 'champ') {
@@ -2373,9 +2523,11 @@ function create3D() {
         } else if (u.kind === 'tower') {
             d.alive.visible = u.alive; d.rubble.visible = !u.alive;
             d.crystal.position.y = 128 + Math.sin(t * 2 + u.id) * 5;
+            d.cHalo.position.y = d.crystal.position.y; d.cHalo.material.opacity = 0.45 + 0.12 * Math.sin(t * 3 + u.id);
             d.crystal.rotation.y = t * 1.2;
         } else {
-            d.crystal.visible = d.r1.visible = d.r2.visible = u.alive;
+            d.crystal.visible = d.r1.visible = d.r2.visible = d.cHalo.visible = u.alive;
+            d.cHalo.position.y = 120 + Math.sin(t * 1.5) * 6; d.cHalo.scale.setScalar(300 + 25 * Math.sin(t * 2.2));
             d.crystal.position.y = 120 + Math.sin(t * 1.5) * 6; d.crystal.rotation.y = t * 0.6;
             d.r1.rotation.set(Math.PI / 2 + Math.sin(t * 0.7) * 0.35, t * 0.6, 0);
             d.r2.rotation.set(Math.PI / 2 + Math.cos(t * 0.9) * 0.35, -t * 0.9, 0);
@@ -2392,6 +2544,7 @@ function create3D() {
                 lastW = W; lastH = H; lastZ = zoom;
                 renderer.setPixelRatio(Math.min(DPR, isTouch ? 1.5 : 2));
                 renderer.setSize(W, H, false);
+                flies.material.uniforms.uScale.value = zoom * Math.min(DPR, isTouch ? 1.5 : 2);
                 camera.left = -W / 2 / zoom; camera.right = W / 2 / zoom; camera.top = H / 2 / zoom; camera.bottom = -H / 2 / zoom;
                 camera.updateProjectionMatrix();
                 const ext = Math.max(W, H) / zoom * 0.75;
@@ -2402,7 +2555,9 @@ function create3D() {
             camera.position.set(target.x, target.y + 2500 * Math.cos(TILT), target.z + 2500 * Math.sin(TILT));
             camera.lookAt(target);
             sun.position.set(target.x - 900, 1800, target.z - 700); sun.target.position.copy(target);
-            water.material.opacity = 0.24 + 0.05 * Math.sin(world.time * 1.3);
+            water.material.opacity = 0.3 + 0.05 * Math.sin(world.time * 1.3);
+            rippleTex.offset.set(world.time * 0.05, Math.sin(world.time * 0.4) * 0.03);
+            flyU.value = world.time;
             const seen = new Set();
             for (const u of world.units) {
                 const near = u.x > view.x0 - 400 && u.x < view.x1 + 400 && u.y > view.y0 - 400 && u.y < view.y1 + 600;
@@ -2520,7 +2675,18 @@ function setView(mode) {
     banner(use3D ? '3D view' : '2D view');
 }
 
+// Show an attack cursor when hovering an enemy (desktop only).
+let hoverCursor = '';
+function updateCursor() {
+    if (isTouch || !mouse.inside) return;
+    const w = toWorld(mouse.sx, mouse.sy);
+    const over = world.units.some((u) => u.alive && u.team !== player.team && Math.hypot(u.x - w.x, (u.y - w.y)) <= u.r + 14);
+    const c = over ? 'url("data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2724%27 height=%2724%27%3E%3Cpath d=%27M3 3l7 2 9 9-3 3-9-9z%27 fill=%27%23ff5a5a%27 stroke=%27%23000%27/%3E%3Cpath d=%27M15 19l4-4 2 2-4 4z%27 fill=%27%23ffd75a%27 stroke=%27%23000%27/%3E%3C/svg%3E") 3 3, crosshair' : '';
+    if (c !== hoverCursor) { hoverCursor = c; canvas.style.cursor = c; }
+}
+
 function render(dt) {
+    updateCursor();
     ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.save();
@@ -2535,6 +2701,7 @@ function render(dt) {
     drawGround(dt);
     drawLights(view);
     drawShockwaves(dt);
+    drawPings();
     drawRangeIndicator();
     const visible = world.units.filter((u) => u.x > view.x0 - 250 && u.x < view.x1 + 250 && u.y > view.y0 - 250 && u.y < view.y1 + 250);
     visible.sort((a, b) => a.y - b.y);
@@ -2566,17 +2733,33 @@ function render(dt) {
 }
 
 function updateCamera(dt) {
+    applyHeldMove(dt);
     if (keysDown.has(' ')) cam.locked = true;
+    // Edge scrolling and arrow keys pan the camera (and unlock it); speed ramps up toward the edge.
+    let px = 0, py = 0;
+    if (!isTouch && !world.autoplay && mouse.inside && !pan && document.hasFocus() && !keysDown.has(' ')) {
+        const edge = 36;
+        if (mouse.sx < edge) px -= 1 - mouse.sx / edge;
+        if (mouse.sx > W - edge) px += 1 - (W - mouse.sx) / edge;
+        if (mouse.sy < edge) py -= 1 - mouse.sy / edge;
+        if (mouse.sy > H - edge) py += 1 - (H - mouse.sy) / edge;
+        px = px && Math.sign(px) * (0.35 + 0.65 * Math.abs(px));
+        py = py && Math.sign(py) * (0.35 + 0.65 * Math.abs(py));
+    }
+    if (keysDown.has('arrowleft')) px = -1;
+    if (keysDown.has('arrowright')) px = 1;
+    if (keysDown.has('arrowup')) py = -1;
+    if (keysDown.has('arrowdown')) py = 1;
+    if (px || py) {
+        if (cam.locked) { cam.locked = false; $('cam-hint') && $('cam-hint').classList.remove('hidden'); }
+        const speed = 1700 / Math.max(zoom, 0.6) * dt;
+        cam.x += px * speed; cam.y += py * speed / COS;
+    }
     if (cam.locked) {
         cam.x += (player.x - cam.x) * Math.min(1, dt * 10);
         cam.y += (player.y - cam.y) * Math.min(1, dt * 10);
-    } else if (mouse.inside) {
-        const edge = 24, speed = 1400 * dt;
-        if (mouse.sx < edge) cam.x -= speed;
-        if (mouse.sx > W - edge) cam.x += speed;
-        if (mouse.sy < edge) cam.y -= speed;
-        if (mouse.sy > H - edge) cam.y += speed;
     }
+    $('cam-hint') && $('cam-hint').classList.toggle('hidden', cam.locked || isTouch);
     const hw = W / 2 / zoom, hh = H / 2 / zoom / COS;
     cam.x = clamp(cam.x, Math.min(hw, MAP / 2), Math.max(MAP - hw, MAP / 2));
     cam.y = clamp(cam.y, Math.min(hh, MAP / 2), Math.max(MAP - hh + 160 / zoom, MAP / 2));
