@@ -153,7 +153,7 @@
 
     <section class="howto">
         <h2>Controls</h2>
-        <p><kbd>Click</kbd> (left or right, hold to keep moving) move / attack · <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd> abilities (aim with mouse) · <kbd>D</kbd> Flash · <kbd>1</kbd> Potion · <kbd>B</kbd> Recall · <kbd>P</kbd> Shop (in base) · Mouse to screen edge, <kbd>←↑↓→</kbd> or middle-drag to pan · <kbd>Y</kbd> toggle camera lock · <kbd>Space</kbd> re-center · <kbd>A</kbd> attack nearest · <kbd>S</kbd> stop (pauses auto-attack) · <kbd>Alt</kbd>+click ping "Help here" · <kbd>Alt</kbd>+right-click ping "Danger" (map or minimap) · <kbd>Esc</kbd> pause</p>
+        <p><kbd>Click</kbd> (left or right, hold to keep moving) move / attack · <kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd> abilities (aim with mouse) · <kbd>D</kbd> Flash · <kbd>1</kbd> Potion · <kbd>B</kbd> Recall · <kbd>P</kbd> Shop (in base) · <kbd>←↑↓→</kbd> move hero · <kbd>K</kbd> switch to WASD layout (move with WASD, abilities on Q E R F, Flash on Shift) · mouse to screen edge or middle-drag to pan · <kbd>Y</kbd> toggle camera lock · <kbd>Space</kbd> re-center · <kbd>A</kbd> attack nearest · <kbd>S</kbd> stop (pauses auto-attack) · <kbd>Alt</kbd>+click ping "Help here" · <kbd>Alt</kbd>+right-click ping "Danger" (map or minimap) · <kbd>Esc</kbd> pause</p>
         <p><b>On mobile/tablet</b> (landscape): left joystick to move · hold ⚔ to auto-attack · tap an ability to auto-aim, or drag from it to aim · tap the map to walk there · long-press the minimap to ping for help.</p>
     </section>
 

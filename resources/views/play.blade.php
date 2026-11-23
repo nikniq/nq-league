@@ -17,6 +17,7 @@
     <div id="feed"></div>
     <div id="cam-hint" class="cam-hint hidden">Camera free · <kbd>Space</kbd> to recenter · <kbd>Y</kbd> to lock</div>
     <button type="button" id="view-toggle" class="view-toggle" title="Toggle 3D / 2D view (G)">3D</button>
+    <button type="button" id="keys-toggle" class="view-toggle keys-toggle" title="Switch key layout: classic QWER or WASD movement (K)">QWER</button>
 
     <div class="bottom">
         <div class="stats">

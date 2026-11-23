@@ -124,7 +124,7 @@ const CHAMPS = {
                   const hit = new Set();
                   for (let i = -2; i <= 2; i++) {
                       const a = base + i * 0.17;
-                      skillshot(u, u.x + Math.cos(a) * 100, u.y + Math.sin(a) * 100, { speed: 1500, range: 900, width: 30, color: '#a8ffcf',
+                      skillshot(u, u.x + Math.cos(a) * 100, u.y + Math.sin(a) * 100, { speed: 1500, range: 900, width: 30, color: '#a8ffcf', seek: 3.2,
                           onHit: (e) => { if (hit.has(e)) return; hit.add(e); damage(u, e, 30 + 18 * lv(u) + 0.9 * u.ad, 'phys'); } });
                   }
               },
@@ -640,6 +640,26 @@ function separate() {
     }
 }
 
+/** Bend a skillshot toward the nearest enemy ahead of it (within ~50° and 550 units). */
+function steerProjectile(p, dt) {
+    const ang = Math.atan2(p.vy, p.vx), spd = Math.hypot(p.vx, p.vy);
+    let best = null, bd = 550;
+    for (const e of world.units) {
+        if (!e.alive || e.team === p.team || e.kind === 'tower' || e.kind === 'nexus') continue;
+        const d = Math.hypot(e.x - p.x, e.y - p.y);
+        if (d > bd) continue;
+        let diff = Math.atan2(e.y - p.y, e.x - p.x) - ang;
+        diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+        if (Math.abs(diff) > 0.9) continue;
+        // Champions are preferred: they count as closer than they are.
+        const score = e.kind === 'champ' ? d * 0.6 : d;
+        if (score < bd) { bd = score; best = { e, diff }; }
+    }
+    if (!best) return;
+    const turn = clamp(best.diff, -p.seek * dt, p.seek * dt);
+    p.vx = Math.cos(ang + turn) * spd; p.vy = Math.sin(ang + turn) * spd;
+}
+
 function updateProjectiles(dt) {
     const out = [];
     for (const p of world.projectiles) {
@@ -656,6 +676,7 @@ function updateProjectiles(dt) {
             out.push(p);
             continue;
         }
+        if (p.seek) steerProjectile(p, dt);
         const nx = p.x + p.vx * dt, ny = p.y + p.vy * dt;
         p.travelled += Math.hypot(p.vx * dt, p.vy * dt);
         let hit = null;
@@ -1027,16 +1048,36 @@ function issueOrder(w) {
 }
 
 const keysDown = new Set();
+// Key layouts. Arrow keys always move the hero; the WASD layout also moves with WASD
+// and shifts abilities to Q E R F (Flash on Shift).
+const LAYOUTS = {
+    classic: { abil: ['q', 'w', 'e', 'r'], flash: ['d', 'f'], flashLabel: 'D', move: {} },
+    wasd: { abil: ['q', 'e', 'r', 'f'], flash: ['shift'], flashLabel: '⇧', move: { w: [0, -1], a: [-1, 0], s: [0, 1], d: [1, 0] } },
+};
+const ARROWS = { arrowup: [0, -1], arrowdown: [0, 1], arrowleft: [-1, 0], arrowright: [1, 0] };
+let layoutName = 'classic';
+try { if (localStorage.getItem('nq-keys') === 'wasd') layoutName = 'wasd'; } catch (_) {}
+const layout = () => LAYOUTS[layoutName];
+function setLayout(name) {
+    layoutName = name;
+    try { localStorage.setItem('nq-keys', name); } catch (_) {}
+    keysDown.clear();
+    refreshKeyLabels();
+    if ($('keys-toggle')) $('keys-toggle').textContent = name === 'wasd' ? 'WASD' : 'QWER';
+    banner(name === 'wasd' ? 'WASD movement · abilities on Q E R F · Flash on Shift' : 'Classic keys · arrows move · abilities on Q W E R');
+}
 window.addEventListener('keydown', (e) => {
     const k = e.key.toLowerCase();
     if (k === 'escape') { if (!$('shop').classList.contains('hidden')) $('shop').classList.add('hidden'); else if (!world.over) paused = !paused; return; }
     if (k.startsWith('arrow') || k === ' ') e.preventDefault();
     if (paused || world.over || e.repeat) return;
     keysDown.add(k);
+    if (ARROWS[k] || layout().move[k]) return;
     const w = toWorld(mouse.sx, mouse.sy);
-    const idx = ['q', 'w', 'e', 'r'].indexOf(k);
+    const idx = layout().abil.indexOf(k);
     if (idx >= 0) { cast(player, idx, w.x, w.y); hoverAbility = -1; }
-    else if (k === 'd' || k === 'f') flash(player, w.x, w.y);
+    else if (layout().flash.includes(k)) flash(player, w.x, w.y);
+    else if (k === 'k') setLayout(layoutName === 'wasd' ? 'classic' : 'wasd');
     else if (k === 'b') { if (player.alive && !inFountain(player, player.team)) { player.recall = 8; player.order = null; } }
     else if (k === 'p') toggleShop();
     else if (k === '1') drinkPotion(player);
@@ -1046,6 +1087,25 @@ window.addEventListener('keydown', (e) => {
     else if (k === 'a') { const t = nearestEnemy(player, 600); if (t) player.order = { type: 'attack', target: t }; }
 });
 window.addEventListener('keyup', (e) => keysDown.delete(e.key.toLowerCase()));
+
+/** Direct keyboard movement: steer the hero in screen directions while keys are held. */
+let keyMoving = false;
+function applyKeyMove() {
+    let dx = 0, dy = 0;
+    const map = { ...ARROWS, ...layout().move };
+    for (const k of keysDown) if (map[k]) { dx += map[k][0]; dy += map[k][1]; }
+    if (!player.alive || player.dash || player.stun > 0) return;
+    if (dx || dy) {
+        const m = Math.hypot(dx, dy);
+        player.recall = 0;
+        player.order = { type: 'move', x: player.x + dx / m * 200, y: player.y + dy / m * 200 / COS, key: true };
+        keyMoving = true;
+        cam.locked = true;
+    } else if (keyMoving) {
+        keyMoving = false;
+        if (player.order && player.order.key) player.order = null;
+    }
+}
 
 if ($('view-toggle')) {
     $('view-toggle').textContent = use3D ? '2D' : '3D';
@@ -1085,7 +1145,7 @@ function renderShop() {
 const abilEls = player.def.abilities.map((a, i) => {
     const el = document.createElement('div');
     el.className = 'abil';
-    el.innerHTML = `<small>${a.key}</small>${a.key}<span class="name">${a.name}</span><div class="cd hidden"></div>`;
+    el.innerHTML = `<small class="key">${a.key}</small>${a.key}<span class="name">${a.name}</span><div class="cd hidden"></div>`;
     el.addEventListener('mouseenter', () => { hoverAbility = i; });
     el.addEventListener('mouseleave', () => { hoverAbility = -1; });
     $('abilities').appendChild(el);
@@ -1093,8 +1153,18 @@ const abilEls = player.def.abilities.map((a, i) => {
 });
 const flashEl = document.createElement('div');
 flashEl.className = 'abil';
-flashEl.innerHTML = '<small>D</small>✦<span class="name">Flash</span><div class="cd hidden"></div>';
+flashEl.innerHTML = '<small class="key">D</small>✦<span class="name">Flash</span><div class="cd hidden"></div>';
 $('abilities').appendChild(flashEl);
+function refreshKeyLabels() {
+    abilEls.forEach((el, i) => { el.querySelector('.key').textContent = layout().abil[i].toUpperCase(); });
+    flashEl.querySelector('.key').textContent = layout().flashLabel;
+}
+refreshKeyLabels();
+if ($('keys-toggle')) {
+    $('keys-toggle').textContent = layoutName === 'wasd' ? 'WASD' : 'QWER';
+    if (isTouch) $('keys-toggle').classList.add('hidden');
+    $('keys-toggle').addEventListener('click', (e) => { setLayout(layoutName === 'wasd' ? 'classic' : 'wasd'); e.currentTarget.blur(); });
+}
 const potionEl = document.createElement('div');
 potionEl.className = 'abil potion';
 potionEl.innerHTML = '<small>1</small>🧪<span class="name">Potion</span><div class="cd hidden"></div><b class="count">0</b>';
@@ -2765,6 +2835,7 @@ function render(dt) {
 
 function updateCamera(dt) {
     applyHeldMove(dt);
+    if (!paused && !world.over && !world.autoplay) applyKeyMove();
     if (keysDown.has(' ')) cam.locked = true;
     // Edge scrolling and arrow keys pan the camera (and unlock it); speed ramps up toward the edge.
     let px = 0, py = 0;
@@ -2777,10 +2848,6 @@ function updateCamera(dt) {
         px = px && Math.sign(px) * (0.35 + 0.65 * Math.abs(px));
         py = py && Math.sign(py) * (0.35 + 0.65 * Math.abs(py));
     }
-    if (keysDown.has('arrowleft')) px = -1;
-    if (keysDown.has('arrowright')) px = 1;
-    if (keysDown.has('arrowup')) py = -1;
-    if (keysDown.has('arrowdown')) py = 1;
     if (px || py) {
         if (cam.locked) { cam.locked = false; $('cam-hint') && $('cam-hint').classList.remove('hidden'); }
         const speed = 1700 / Math.max(zoom, 0.6) * dt;

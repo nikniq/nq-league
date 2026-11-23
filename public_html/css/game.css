@@ -377,3 +377,5 @@ body.touch .view-toggle { top: calc(6px + env(safe-area-inset-top)); left: auto;
 
 .cam-hint { position: absolute; top: 52px; left: 50%; transform: translateX(-50%); padding: 5px 12px; border-radius: 6px; background: rgba(10, 15, 26, .75); border: 1px solid rgba(255, 255, 255, .12); color: #c3c9d8; font-size: 12px; pointer-events: none; white-space: nowrap; }
 .cam-hint kbd { font-size: 11px; }
+.keys-toggle { left: 64px; }
+body.touch .keys-toggle { display: none; }
