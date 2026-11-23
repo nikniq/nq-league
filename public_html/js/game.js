@@ -912,7 +912,7 @@ function botShop(u) {
     const prefs = u.key === 'arcanist' ? ['boots', 'rod', 'tome', 'ruby', 'belt', 'rod'] : u.key === 'ranger' ? ['boots', 'pickaxe', 'dagger', 'dagger', 'sword', 'cloth'] : ['boots', 'belt', 'pickaxe', 'cloth', 'ruby', 'sword'];
     for (const id of prefs) {
         const item = ITEMS.find((i) => i.id === id);
-        if (u.items.length >= MAX_ITEMS) return;
+        if (u.items.length >= MAX_ITEMS) break;
         if (item.unique && u.items.some((i) => i.id === id)) continue;
         if (u.items.filter((i) => i.id === id).length >= prefs.filter((p) => p === id).length) continue;
         if (u.gold >= item.cost) { u.gold -= item.cost; u.items.push(item); recalcStats(u, false); }
