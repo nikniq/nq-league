@@ -2345,7 +2345,7 @@ function create3D() {
     const haloMats = {};
     const halo = (color, size, opacity = 0.7) => {
         const m = haloMats[color + opacity] || (haloMats[color + opacity] = new T.SpriteMaterial({ map: haloTex, color, transparent: true, opacity, blending: T.AdditiveBlending, depthWrite: false, fog: false }));
-        const sp = new T.Sprite(m); sp.scale.set(size, size, 1); sp.renderOrder = 5;
+        const sp = new T.Sprite(opacity === 0 ? m.clone() : m); sp.scale.set(size, size, 1); sp.renderOrder = 5;
         return sp;
     };
 
@@ -2427,7 +2427,16 @@ function create3D() {
         ring.rotation.x = Math.PI / 2; ring.castShadow = false; g.add(ring);
         const bubble = part(G.sphere, new T.MeshStandardMaterial({ color: 0xa0d2ff, transparent: true, opacity: 0.28, emissive: 0x6aa8ff, emissiveIntensity: 0.4 }), 0, r * 1.1, 0, r * 1.5);
         bubble.castShadow = false; bubble.visible = false; g.add(bubble);
-        g.userData = { rig, arm, ring, bubble };
+        // Whirlwind: two tilted translucent blade rings spun around the body.
+        const swirl = new T.Group(); swirl.visible = false; g.add(swirl);
+        for (let k = 0; k < 2; k++) {
+            const s = new T.Mesh(new T.TorusGeometry(r * (2.6 + k * 0.9), r * 0.12, 4, 32, Math.PI * 1.3),
+                new T.MeshBasicMaterial({ color: k ? 0xfff2b0 : 0xffd75a, transparent: true, opacity: 0.55, blending: T.AdditiveBlending, depthWrite: false }));
+            s.rotation.x = Math.PI / 2 + (k ? 0.15 : -0.1); s.position.y = r * (0.8 + k * 0.5); swirl.add(s);
+        }
+        const aura = halo(0x5dffa8, r * 4, 0.0); aura.position.y = r * 1.1; g.add(aura);
+        const hit = halo(0xffffff, r * 3.2, 0.0); hit.position.y = r * 1.1; g.add(hit);
+        g.userData = { rig, arm, ring, bubble, swirl, aura, hit };
         return g;
     }
     function buildMinion(u) {
@@ -2444,7 +2453,8 @@ function create3D() {
             if (u.mtype === 'melee') rig.add(part(G.box, mat(0xd8dde6, { metalness: 0.7 }), r * 0.7, r * 0.9, r * 0.6, r * 0.9, r * 0.1, r * 0.14));
             else { rig.add(part(G.cone, mat(shade(team, -0.3)), r * 0.15, r * 2.05, 0, r * 0.38, r * 0.7, r * 0.38)); rig.add(part(G.sphere, glowMat(0xffe08a), r * 0.75, r * 1.0, r * 0.5, r * 0.18)); const h = halo(0xffd070, r * 1.4, 0.55); h.position.set(r * 0.75, r * 1.0, r * 0.5); rig.add(h); }
         }
-        g.userData = { rig };
+        const hit = halo(0xffffff, r * 3, 0.0); hit.position.y = r; g.add(hit);
+        g.userData = { rig, hit };
         return g;
     }
     function buildTower(u) {
@@ -2457,14 +2467,19 @@ function create3D() {
         alive.add(part(G.oct8, mat(0x6c717b), 0, 108, 0, 24, 8, 24));
         const crystal = part(G.oct, glowMat(team), 0, 128, 0, 13, 22, 13);
         crystal.castShadow = false; alive.add(crystal);
-        const cHalo = halo(team, 90, 0.55); cHalo.position.y = 128; alive.add(cHalo);
+        const cHalo = halo(team, 90, 0.55); cHalo.material = cHalo.material.clone(); cHalo.position.y = 128; alive.add(cHalo);
+        // Team banner hanging from a pole, waving in the wind.
+        alive.add(part(G.cyl, mat(0x3a3328), 26, 100, 0, 1.6, 70, 1.6));
+        const flagGeo = new T.PlaneGeometry(26, 34, 8, 1); flagGeo.translate(13, 0, 0);
+        const flag = new T.Mesh(flagGeo, mat(team, { side: T.DoubleSide, emissive: team, emissiveIntensity: 0.15 }));
+        flag.position.set(27, 116, 0); flag.castShadow = true; alive.add(flag);
         const rubble = new T.Group(); g.add(rubble); rubble.visible = false;
         const rr = rng(u.id * 97);
         for (let i = 0; i < 10; i++) {
             const b = part(G.box, mat(i % 2 ? 0x4c4f57 : 0x6a6e77), (rr() - 0.5) * 80, 5 + rr() * 8, (rr() - 0.5) * 60, 10 + rr() * 16, 8 + rr() * 10, 10 + rr() * 14);
             b.rotation.set(rr() * 2, rr() * 3, rr()); rubble.add(b);
         }
-        g.userData = { alive, rubble, crystal, cHalo };
+        g.userData = { alive, rubble, crystal, cHalo, flag, flagBase: Float32Array.from(flagGeo.attributes.position.array) };
         return g;
     }
     function buildNexus(u) {
@@ -2474,12 +2489,15 @@ function create3D() {
         const inner = part(G.ring, mat(team, { emissive: team, emissiveIntensity: 0.5 }), 0, 33, 0, 70); inner.rotation.x = Math.PI / 2; g.add(inner);
         const crystal = part(G.oct, glowMat(team), 0, 120, 0, 40, 75, 40); g.add(crystal);
         const cHalo = halo(team, 300, 0.5); cHalo.position.y = 120; g.add(cHalo);
+        const beam = new T.Mesh(new T.CylinderGeometry(14, 30, 1400, 16, 1, true),
+            new T.MeshBasicMaterial({ color: team, transparent: true, opacity: 0.16, blending: T.AdditiveBlending, depthWrite: false, side: T.DoubleSide, fog: false }));
+        beam.position.y = 860; g.add(beam);
         const r1 = part(G.ring, mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.4 }), 0, 115, 0, 85);
         const r2 = part(G.ring, mat(0xffffff, { emissive: 0xffffff, emissiveIntensity: 0.4 }), 0, 115, 0, 66);
         r1.castShadow = r2.castShadow = false; g.add(r1, r2);
         const dome = part(G.dome, new T.MeshStandardMaterial({ color: 0xc8dcff, transparent: true, opacity: 0.16, emissive: 0x88aaff, emissiveIntensity: 0.3, depthWrite: false }), 0, 0, 0, 140);
         dome.castShadow = false; g.add(dome);
-        g.userData = { crystal, r1, r2, dome, cHalo };
+        g.userData = { crystal, r1, r2, dome, cHalo, beam };
         return g;
     }
 
@@ -2510,6 +2528,7 @@ function create3D() {
             const bob = moving ? Math.abs(Math.sin((u.walkT || 0) * (u.kind === 'champ' ? 12 : 14) + u.id)) * (u.kind === 'champ' ? 4 : 2.5) : 0;
             d.rig.position.y = bob;
             d.rig.scale.y = moving ? 1 : 1 + Math.sin(t * 2.4 + u.id) * 0.025;
+            d.hit.material.opacity = Math.max(0, (u.flashT || 0) / 0.12) * 0.5;
             const facing = u.spin > 0 ? t * 22 : (u.facing ?? (u.team === BLUE ? -Math.PI / 4 : Math.PI * 0.75));
             d.rig.rotation.y = -facing;
             if (u.kind === 'champ') {
@@ -2519,11 +2538,22 @@ function create3D() {
                 d.ring.visible = true;
                 d.ring.scale.setScalar(u.r * (1.25 + (u.isPlayer ? 0.06 * Math.sin(t * 4) : 0)));
                 d.bubble.visible = u.shield > 0;
+                d.swirl.visible = u.spin > 0;
+                if (u.spin > 0) { d.swirl.rotation.y = -t * 14; d.swirl.children.forEach((s, k) => { s.material.opacity = 0.35 + 0.25 * Math.sin(t * 20 + k); }); }
+                d.aura.material.opacity = u.rapid > 0 ? 0.35 + 0.15 * Math.sin(t * 12) : 0;
             }
         } else if (u.kind === 'tower') {
             d.alive.visible = u.alive; d.rubble.visible = !u.alive;
             d.crystal.position.y = 128 + Math.sin(t * 2 + u.id) * 5;
             d.cHalo.position.y = d.crystal.position.y; d.cHalo.material.opacity = 0.45 + 0.12 * Math.sin(t * 3 + u.id);
+            if (u.alive && dt > 0) {
+                const pos = d.flag.geometry.attributes.position, b = d.flagBase;
+                for (let i = 0; i < pos.count; i++) {
+                    const x = b[i * 3], k = x / 26;
+                    pos.array[i * 3 + 2] = Math.sin(t * 5 + x * 0.25 + u.id) * 4 * k;
+                }
+                pos.needsUpdate = true; d.flag.geometry.computeVertexNormals();
+            }
             d.crystal.rotation.y = t * 1.2;
         } else {
             d.crystal.visible = d.r1.visible = d.r2.visible = d.cHalo.visible = u.alive;
@@ -2532,6 +2562,7 @@ function create3D() {
             d.r1.rotation.set(Math.PI / 2 + Math.sin(t * 0.7) * 0.35, t * 0.6, 0);
             d.r2.rotation.set(Math.PI / 2 + Math.cos(t * 0.9) * 0.35, -t * 0.9, 0);
             d.dome.visible = u.alive && isInvulnerable(u);
+            d.beam.visible = u.alive; d.beam.material.opacity = 0.12 + 0.05 * Math.sin(t * 2);
         }
     }
 
