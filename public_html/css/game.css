@@ -406,3 +406,5 @@ body.touch .keys-toggle { display: none; }
 .lb-table tr.me td { background: rgba(255, 211, 77, .08); }
 .lb-table td.num, .lb-table th.num { text-align: right; }
 .lb-table th.sorted { color: var(--gold); }
+.sound-toggle { left: 118px; }
+body.touch .sound-toggle { left: 64px; }
