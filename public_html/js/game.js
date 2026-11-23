@@ -2467,7 +2467,28 @@ function create3D() {
     };
     const camera = new T.OrthographicCamera(-1, 1, 1, -1, 1, 6000);
 
-    scene.add(new T.HemisphereLight(0xcfe3ff, 0x34402a, 0.6));
+    const hemi = new T.HemisphereLight(0xcfe3ff, 0x34402a, 0.6);
+    scene.add(hemi);
+    // Time of day: an 8-minute cycle of day, golden hour, moonlit night and dawn.
+    const SKY = [
+        { sun: 0xfff0d0, si: 1.25, sky: 0xcfe3ff, gnd: 0x34402a, hi: 0.6, fog: 0x0e1a16, glow: 1 },
+        { sun: 0xff9a50, si: 1.05, sky: 0xffc090, gnd: 0x3a2818, hi: 0.45, fog: 0x1e1610, glow: 1.3 },
+        { sun: 0x6f88ff, si: 0.28, sky: 0x4058a8, gnd: 0x0c1220, hi: 0.3, fog: 0x060912, glow: 2.4 },
+        { sun: 0xffc8d8, si: 0.95, sky: 0xd8c8ff, gnd: 0x2c3030, hi: 0.5, fog: 0x14141c, glow: 1.4 },
+    ];
+    const ca = new T.Color(), cb = new T.Color();
+    const mix = (a, b, k) => ca.set(a).lerp(cb.set(b), k).getHex();
+    let lightGlow = 1;
+    // ?tod=<seconds> shifts the time of day (debugging and screenshots).
+    const SKY_OFFSET = Number(new URLSearchParams(location.search).get('tod')) || 0;
+    function applySky(t) {
+        const f = (t / 120) % SKY.length, i = Math.floor(f), j = (i + 1) % SKY.length;
+        const k = Math.min(1, Math.max(0, (f - i - 0.6) / 0.4)), e = k * k * (3 - 2 * k), a = SKY[i], b = SKY[j];
+        sun.color.setHex(mix(a.sun, b.sun, e)); sun.intensity = a.si + (b.si - a.si) * e;
+        hemi.color.setHex(mix(a.sky, b.sky, e)); hemi.groundColor.setHex(mix(a.gnd, b.gnd, e)); hemi.intensity = a.hi + (b.hi - a.hi) * e;
+        scene.fog.color.setHex(mix(a.fog, b.fog, e)); scene.background.copy(scene.fog.color);
+        lightGlow = a.glow + (b.glow - a.glow) * e;
+    }
     const sun = new T.DirectionalLight(0xfff0d0, 1.25);
     sun.castShadow = true;
     sun.shadow.mapSize.set(isTouch ? 1024 : 2048, isTouch ? 1024 : 2048);
@@ -2868,6 +2889,7 @@ function create3D() {
             camera.position.set(target.x, target.y + 2500 * Math.cos(TILT), target.z + 2500 * Math.sin(TILT));
             camera.lookAt(target);
             sun.position.set(target.x - 900, 1800, target.z - 700); sun.target.position.copy(target);
+            applySky(world.time + SKY_OFFSET);
             water.material.opacity = 0.3 + 0.05 * Math.sin(world.time * 1.3);
             rippleTex.offset.set(world.time * 0.05, Math.sin(world.time * 0.4) * 0.03);
             flyU.value = world.time;
@@ -2897,7 +2919,7 @@ function create3D() {
             lights.forEach((l, i) => {
                 const c = cands[i];
                 if (!c) { l.intensity = 0; return; }
-                l.position.set(c.x, c.y, c.z); l.color.set(c.c); l.intensity = c.i; l.distance = c.d;
+                l.position.set(c.x, c.y, c.z); l.color.set(c.c); l.intensity = c.i * lightGlow; l.distance = c.d * (0.7 + 0.3 * lightGlow);
             });
             renderer.render(scene, camera);
         },
